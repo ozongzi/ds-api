@@ -1,3 +1,70 @@
+//! 高级请求构建器模块
+//!
+//! 提供类型安全的 API 请求构建器，简化与 DeepSeek API 的交互。
+//!
+//! # 主要类型
+//!
+//! - [`Request`]: 主要的请求构建器，提供流畅的 API 来构建聊天补全请求
+//!
+//! # 示例
+//!
+//! ## 基本使用
+//!
+//! ```rust
+//! use ds_api::{Request, Message, Role};
+//!
+//! let request = Request::basic_query(vec![
+//!     Message::new(Role::User, "Hello, world!")
+//! ]);
+//! ```
+//!
+//! ## 使用构建器模式
+//!
+//! ```rust
+//! use ds_api::{Request, Message, Role};
+//!
+//! let request = Request::builder()
+//!     .add_message(Message::new(Role::System, "You are a helpful assistant."))
+//!     .add_message(Message::new(Role::User, "What is Rust?"))
+//!     .temperature(0.7)
+//!     .max_tokens(100);
+//! ```
+//!
+//! ## 流式响应
+//!
+//! ```rust,no_run
+//! use ds_api::{Request, Message, Role};
+//! use futures::StreamExt;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let token = "your_token".to_string();
+//! let client = reqwest::Client::new();
+//!
+//! let request = Request::basic_query(vec![
+//!     Message::new(Role::User, "Tell me a story.")
+//! ]);
+//!
+//! let stream = request.execute_client_streaming(&client, &token).await?;
+//!
+//! // 使用 pin_mut! 宏来固定流
+//! use futures::pin_mut;
+//! pin_mut!(stream);
+//!
+//! while let Some(chunk_result) = stream.next().await {
+//!     match chunk_result {
+//!         Ok(chunk) => {
+//!             if let Some(content) = chunk.choices[0].delta.content.as_ref() {
+//!                 print!("{}", content);
+//!             }
+//!         }
+//!         Err(e) => eprintln!("Error: {}", e),
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+
 pub use crate::raw::*;
 use eventsource_stream::Eventsource;
 use futures::Stream;
@@ -19,11 +86,7 @@ impl Request {
     /// use ds_api::request::Message;
     /// use ds_api::request::Request;
     /// let request = Request::basic_query(vec![
-    ///    Message {
-    ///       role: Role::User,
-    ///       content: Some("What is the capital of France?".to_string()),
-    ///       ..Default::default()
-    ///   }
+    ///    Message::new(Role::User, "What is the capital of France?")
     /// ]);
     /// ```
     pub fn basic_query(messages: Vec<Message>) -> Self {
@@ -40,11 +103,7 @@ impl Request {
     /// use ds_api::request::Message;
     /// use ds_api::request::Request;
     /// let request = Request::basic_query_reasoner(vec![
-    ///    Message {
-    ///       role: Role::User,
-    ///       content: Some("What is the capital of France?".to_string()),
-    ///       ..Default::default()
-    ///   }
+    ///    Message::new(Role::User, "What is the capital of France?")
     /// ]);
     /// ```
     pub fn basic_query_reasoner(messages: Vec<Message>) -> Self {

@@ -8,7 +8,7 @@ pub enum ToolChoice {
     String(ToolChoiceType),
 
     /// type string REQUIRED
-    ///     Possible values: [function]
+    ///     Possible values: `function`
     ///     tool 的类型。目前，仅支持 function。
     /// function object REQUIRED
     ///     name string REQUIRED

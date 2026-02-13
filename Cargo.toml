@@ -2,6 +2,13 @@
 name = "ds-api"
 version = "0.1.0"
 edition = "2024"
+description = "A Rust client library for the DeepSeek API with support for chat completions, streaming, and tools"
+authors = ["ozongzi <ozongzi@icloud.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ozongzi/ds-api"
+readme = "README.md"
+keywords = ["deepseek", "api", "ai", "chat", "llm", "openai"]
+categories = ["api-bindings", "web-programming"]
 
 [dependencies]
 eventsource-stream = "0.2.3"
@@ -10,3 +17,7 @@ reqwest = { version = "0.13", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.49.0", features = ["full"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

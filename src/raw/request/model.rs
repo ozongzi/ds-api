@@ -8,4 +8,3 @@ pub enum Model {
     DeepseekChat,
     DeepseekReasoner,
 }
-
