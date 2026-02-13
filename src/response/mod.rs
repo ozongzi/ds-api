@@ -12,7 +12,7 @@ pub trait Response {
 
 impl Response for ChatCompletionResponse {
     fn content(&self) -> &str {
-        &self.choices[0].message.content.as_ref().unwrap()
+        self.choices[0].message.content.as_ref().unwrap()
     }
 
     fn created(&self) -> SystemTime {

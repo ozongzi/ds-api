@@ -249,10 +249,14 @@ impl Request {
         Ok(chunk_stream)
     }
 
+    /// # Safety
+    /// 该函数允许直接从原始请求数据创建一个 Request 对象，绕过了构建器的合法性检查。调用者必须确保提供的原始数据是合法且符合 API 要求的，否则可能导致请求失败或产生不可预期的行为。
     pub unsafe fn from_raw_unchecked(raw: ChatCompletionRequest) -> Self {
         Self { raw }
     }
 
+    /// # Safety
+    /// 该函数返回对原始请求数据的可变引用，允许直接修改请求的各个字段。调用者必须确保在修改过程中保持请求数据的合法性和一致性，以避免产生无效的请求或引发错误。
     pub unsafe fn get_raw_mut(&mut self) -> &mut ChatCompletionRequest {
         &mut self.raw
     }

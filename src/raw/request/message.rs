@@ -50,18 +50,15 @@ impl Message {
 // 角色枚举（包含 Tool 变体）
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Role {
     System,
+    #[default]
     User,
     Assistant,
     Tool,
 }
 
-impl Default for Role {
-    fn default() -> Self {
-        Role::User
-    }
-}
 
 // 工具调用结构体（请求和响应中复用）
 #[derive(Debug, Serialize, Deserialize)]
