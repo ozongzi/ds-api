@@ -6,7 +6,7 @@ pub struct ResponseFormat {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ResponseFormatType {
     Text,
     JsonObject,

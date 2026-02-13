@@ -74,6 +74,21 @@ impl Request {
         self
     }
 
+    pub fn response_format_type(mut self, response_format_type: ResponseFormatType) -> Self {
+        self.raw.response_format = Some(ResponseFormat {
+            r#type: response_format_type,
+        });
+        self
+    }
+
+    pub fn json(self) -> Self {
+        self.response_format_type(ResponseFormatType::JsonObject)
+    }
+
+    pub fn text(self) -> Self {
+        self.response_format_type(ResponseFormatType::Text)
+    }
+
     /// Possible values: >= -2 and <= 2
     /// Default value: 0
     /// 介于 -2.0 和 2.0 之间的数字。如果该值为正，那么新 token 会根据其在已有文本中的出现频率受到相应的惩罚，降低模型重复相同内容的可能性。
@@ -163,9 +178,9 @@ impl Request {
             .bearer_auth(token)
             .json(&self.raw)
             .send()
-            .await?
-            .json::<ChatCompletionResponse>()
             .await?;
+
+        let resp = resp.json::<ChatCompletionResponse>().await?;
 
         Ok(resp)
     }

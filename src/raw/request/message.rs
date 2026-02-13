@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 // 统一的消息结构体
 // 该结构体同时用于请求中的 messages 数组和响应中的 message 字段。
 // 所有字段均为可选，以覆盖不同角色和场景的需求。
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Message {
     /// default role is User
     pub role: Role,
@@ -48,9 +48,8 @@ impl Message {
 }
 
 // 角色枚举（包含 Tool 变体）
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "lowercase")]
-#[derive(Default)]
 pub enum Role {
     System,
     #[default]
@@ -59,22 +58,21 @@ pub enum Role {
     Tool,
 }
 
-
 // 工具调用结构体（请求和响应中复用）
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
     pub id: String,
     pub r#type: ToolType,
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolType {
     Function,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String, // JSON 字符串
