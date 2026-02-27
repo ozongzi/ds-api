@@ -45,8 +45,9 @@ async fn main() -> ds_api::error::Result<()> {
         }
     ]);
     
-    // 执行请求
-    let response = request.execute_nostreaming(&token).await?;
+    // 执行请求（使用 DeepseekClient 发送）
+    let ds_client = ds_api::DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
     let content = response.content()?;
     
     println!("Response: {}", content);
@@ -98,7 +99,8 @@ async fn main() -> ds_api::error::Result<()> {
         }
     ]);
     
-    let mut stream = request.execute_client_streaming(&client, &token).await?;
+    let ds_client = ds_api::DeepseekClient::new(token.clone());
+    let mut stream = ds_client.send_stream(request).await?;
     
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
@@ -114,6 +116,48 @@ async fn main() -> ds_api::error::Result<()> {
     Ok(())
 }
 ```
+
+## 在测试中注入自定义 `DeepseekClient`
+
+在测试或特定运行环境中，你可能需要注入一个自定义配置的 `reqwest::Client`（例如调整超时、代理或根证书），或者将请求指向一个 mock server（如 `wiremock`）。下面示例展示如何用 `DeepseekClient::from_parts` 注入自定义 `reqwest::Client` 并指向 mock 的 base URL：
+
+```rust
+use ds_api::DeepseekClient;
+use reqwest::Client as ReqwestClient;
+
+// 假设在测试中：使用 wiremock 启动一个 MockServer，mock_server.uri() 返回类似 "http://127.0.0.1:12345"
+let mock_base = "http://127.0.0.1:12345"; // 用实际的 MockServer.uri() 替换
+
+// 自定义 reqwest client（例如设置超时、代理或证书）
+let reqwest_client = ReqwestClient::builder()
+    .timeout(std::time::Duration::from_secs(5))
+    .build()
+    .unwrap();
+
+// 从已有 parts 创建 DeepseekClient（注入自定义 reqwest client）
+// 这样请求将被发送到 mock server，并使用你配置的 reqwest client 行为。
+let mut ds_client = DeepseekClient::from_parts("test-token", mock_base, reqwest_client);
+
+// 你也可以在运行时修改 token 或 base_url（例如在测试中动态切换）
+ds_client.set_token("rotated-token");
+ds_client.set_base_url("http://127.0.0.1:12345");
+
+// 构造请求并发送（参考上文示例）
+let request = Request::basic_query(vec![
+    Message {
+        role: Role::User,
+        content: Some("Hello from test".to_string()),
+        ..Default::default()
+    }
+]);
+
+// 非流式调用示例
+let response = ds_client.send(request).await?;
+let content = response.content()?;
+println!("Mock response: {}", content);
+```
+
+这样可以在测试中把流量引导到 mock server，或在生产中传入预先配置好的 `reqwest::Client`（例如有特定代理/证书的 client）。
 
 ### 使用工具调用
 
@@ -152,7 +196,8 @@ async fn main() -> ds_api::error::Result<()> {
     })
     .tool_choice_type(ToolChoiceType::Auto);
     
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = ds_api::DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
     
     println!("Response: {:?}", response);
     Ok(())
@@ -183,7 +228,8 @@ async fn main() -> ds_api::error::Result<()> {
     ])
     .json(); // 启用 JSON 模式
     
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = ds_api::DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
     
     // 解析 JSON 响应
     let json_text = response.content()?;
@@ -275,7 +321,8 @@ async fn main() -> ds_api::error::Result<()> {
         }
     ]);
     
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = ds_api::DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
     let content = response.content()?;
     println!("Response: {}", content);
     

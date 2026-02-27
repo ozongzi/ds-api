@@ -98,7 +98,7 @@ async fn test_execute_client_streaming_baseurl_parses_chunks() -> Result<()> {
     // call streaming with the mock server base
     let base = mock_server.uri();
     let stream = req
-        .execute_client_streaming_baseurl(&client, &base, "test-token")
+        .execute_client_baseurl_streaming(&client, &base, "test-token")
         .await?;
 
     futures::pin_mut!(stream);

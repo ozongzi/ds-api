@@ -258,39 +258,9 @@ impl Request {
         Ok(parsed)
     }
 
-    /// 便捷方法：使用默认 base URL 执行无流式请求（接收不可变的 `&Client`）。
-    pub async fn execute_client_nostreaming(
-        self,
-        client: &reqwest::Client,
-        token: &str,
-    ) -> Result<ChatCompletionResponse> {
-        self.execute_client_baseurl_nostreaming(client, DEFAULT_API_BASE, token)
-            .await
-    }
-
-    /// 在没有外部 `Client` 的情况下执行无流式请求（使用传入的 `base_url`）。
-    pub async fn execute_baseurl_nostreaming(
-        self,
-        base_url: &str,
-        token: &str,
-    ) -> Result<ChatCompletionResponse> {
-        let client = reqwest::Client::new();
-        self.execute_client_baseurl_nostreaming(&client, base_url, token)
-            .await
-    }
-
-    /// 使用默认 base URL 执行无流式请求（最常用的便捷方法）。
-    pub async fn execute_nostreaming(self, token: &str) -> Result<ChatCompletionResponse> {
-        self.execute_baseurl_nostreaming(DEFAULT_API_BASE, token)
-            .await
-    }
-
-    /// 执行流式（SSE）响应请求。使用 `DEFAULT_API_BASE` 构建 URL，并对流中可能出现的解析错误进行更加明确的映射。
-    ///
+    /// 执行流式（SSE）请求（使用自定义 base_url）。
     /// 返回一个 Stream，每个 Item 是 `Result<ChatCompletionChunk, ApiError>`。
-    /// Execute a streaming request (SSE) using a custom `base_url`.
-    /// 返回一个 Stream，每个 Item 是 `Result<ChatCompletionChunk, ApiError>`。
-    pub async fn execute_client_streaming_baseurl(
+    pub async fn execute_client_baseurl_streaming(
         mut self,
         client: &reqwest::Client,
         base_url: &str,
@@ -321,7 +291,7 @@ impl Request {
         //   - 否则尝试反序列化为 ChatCompletionChunk
         //     - 若解析成功 -> Some(Ok(chunk))
         //     - 若解析失败 -> Some(Err(ApiError::Json(...)))
-        // - 如果 eventsource 返回错误 -> Some(Err(ApiError::Other(...)))
+        // - 如果 eventsource 返回错误 -> Some(Err(ApiError::EventSource(...)))
         let chunk_stream = event_stream.filter_map(|event_result| async move {
             match event_result {
                 Ok(event) => {
@@ -340,18 +310,10 @@ impl Request {
 
         Ok(chunk_stream)
     }
+}
 
-    /// Execute a streaming request (SSE) using the default API base URL.
-    /// Convenience wrapper that delegates to `execute_client_streaming_baseurl`.
-    pub async fn execute_client_streaming(
-        self,
-        client: &reqwest::Client,
-        token: &str,
-    ) -> Result<impl Stream<Item = std::result::Result<ChatCompletionChunk, ApiError>>> {
-        self.execute_client_streaming_baseurl(client, DEFAULT_API_BASE, token)
-            .await
-    }
-
+/// Additional `impl` block for `Request` containing unsafe constructors/accessors.
+impl Request {
     /// # Safety
     /// 该函数允许直接从原始请求数据创建一个 Request 对象，绕过了构建器的合法性检查。调用者必须确保提供的原始数据是合法且符合 API 要求的，否则可能导致请求失败或产生不可预期的行为。
     pub unsafe fn from_raw_unchecked(raw: ChatCompletionRequest) -> Self {
@@ -364,6 +326,120 @@ impl Request {
         &mut self.raw
     }
 }
+
+/// DeepseekClient: a small convenience wrapper that owns a reqwest::Client, base_url and token.
+/// Provides ergonomic methods to send Request instances without repeating token/base.
+#[derive(Clone, Debug)]
+pub struct DeepseekClient {
+    token: String,
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl DeepseekClient {
+    /// Create a new DeepseekClient with given token and default base URL.
+    pub fn new(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+            base_url: DEFAULT_API_BASE.to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Create a DeepseekClient from existing parts (token, base_url and a pre-configured reqwest::Client).
+    /// Useful for injecting custom timeouts, proxies or certificates.
+    pub fn from_parts(
+        token: impl Into<String>,
+        base_url: impl Into<String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            token: token.into(),
+            base_url: base_url.into(),
+            client,
+        }
+    }
+
+    /// Builder-style: set a custom base URL
+    pub fn with_base_url(mut self, base: impl Into<String>) -> Self {
+        self.base_url = base.into();
+        self
+    }
+
+    /// Builder-style: set a new token and return owned self
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = token.into();
+        self
+    }
+
+    /// Mutable setter: replace the token in-place (useful for runtime token rotation)
+    pub fn set_token(&mut self, token: impl Into<String>) {
+        self.token = token.into();
+    }
+
+    /// Mutable setter: replace the base_url in-place
+    pub fn set_base_url(&mut self, base: impl Into<String>) {
+        self.base_url = base.into();
+    }
+
+    /// Borrow the underlying reqwest client
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    /// Borrow mutably the underlying reqwest client (rarely needed, but provided)
+    pub fn client_mut(&mut self) -> &mut reqwest::Client {
+        &mut self.client
+    }
+
+    /// Send a non-streaming Request using this client's configuration
+    pub async fn send(&self, request: Request) -> Result<ChatCompletionResponse> {
+        request
+            .execute_client_baseurl_nostreaming(&self.client, &self.base_url, &self.token)
+            .await
+    }
+
+    /// Send a streaming Request using this client's configuration
+    pub async fn send_stream(
+        &self,
+        request: Request,
+    ) -> Result<impl Stream<Item = std::result::Result<ChatCompletionChunk, ApiError>>> {
+        request
+            .execute_client_baseurl_streaming(&self.client, &self.base_url, &self.token)
+            .await
+    }
+
+    /// High-level helper: return a stream of text chunks (merged delta.content) from a streaming request.
+    /// Each yielded item is `Result<String, ApiError>` where the Ok value is a contiguous snippet of text
+    /// (from delta.content if present). This is convenient when callers only want textual output.
+    pub async fn stream_text(
+        &self,
+        request: Request,
+    ) -> Result<impl Stream<Item = std::result::Result<String, ApiError>>> {
+        use futures::StreamExt;
+        let chunk_stream = self.send_stream(request).await?;
+
+        // Map each ChatCompletionChunk into its delta.content (if any) and return as String.
+        // Non-text chunks yield an empty string; parsing errors are propagated as ApiError.
+        let text_stream = chunk_stream.map(|item_res| match item_res {
+            Ok(chunk) => {
+                // Collect text from choices[0].delta.content if present
+                let s = chunk
+                    .choices
+                    .get(0)
+                    .and_then(|c| c.delta.content.as_ref())
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+                Ok(s)
+            }
+            Err(e) => Err(e),
+        });
+
+        Ok(text_stream)
+    }
+}
+
+// end of module-level items for Request and DeepseekClient
 
 #[cfg(test)]
 mod tests {
