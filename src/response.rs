@@ -41,7 +41,7 @@
 //! # };
 //!
 //! // 获取响应内容
-//! let content = response.content();
+//! let content = response.content().unwrap();
 //! println!("Response content: {}", content);
 //!
 //! // 获取响应创建时间
@@ -59,7 +59,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::raw::ChatCompletionResponse;
+use crate::{
+    error::{ApiError, Result},
+    raw::ChatCompletionResponse,
+};
 
 /// 响应 trait，为 DeepSeek API 响应提供统一的访问接口
 ///
@@ -71,7 +74,7 @@ pub trait Response {
     /// # 返回
     ///
     /// 返回响应内容的字符串切片。对于聊天补全响应，这通常是助手的回复文本。
-    fn content(&self) -> &str;
+    fn content(&self) -> Result<&str>;
 
     /// 获取响应的创建时间
     ///
@@ -82,8 +85,11 @@ pub trait Response {
 }
 
 impl Response for ChatCompletionResponse {
-    fn content(&self) -> &str {
-        self.choices[0].message.content.as_ref().unwrap()
+    fn content(&self) -> Result<&str> {
+        self.choices
+            .get(0)
+            .and_then(|c| c.message.content.as_deref())
+            .ok_or_else(|| ApiError::Other("empty choices or missing content".to_string()))
     }
 
     fn created(&self) -> SystemTime {

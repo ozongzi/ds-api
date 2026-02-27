@@ -33,7 +33,7 @@ ds-api = "0.1"
 use ds_api::{Request, Message, Role};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     
     // 创建请求
@@ -47,8 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 执行请求
     let response = request.execute_nostreaming(&token).await?;
+    let content = response.content()?;
     
-    println!("Response: {}", response.content());
+    println!("Response: {}", content);
     Ok(())
 }
 ```
@@ -59,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ds_api::SimpleChatter;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     let system_prompt = "You are a helpful assistant.".to_string();
     
@@ -85,7 +86,7 @@ use ds_api::{Request, Message, Role};
 use futures::StreamExt;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     let client = reqwest::Client::new();
     
@@ -121,7 +122,7 @@ use ds_api::{Request, Message, Role, Tool, ToolChoice, ToolChoiceType};
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     
     let request = Request::basic_query(vec![
@@ -165,7 +166,7 @@ use ds_api::{Request, Message, Role};
 use serde_json::Value;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     
     let request = Request::basic_query(vec![
@@ -185,7 +186,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = request.execute_nostreaming(&token).await?;
     
     // 解析 JSON 响应
-    let json_value: Value = serde_json::from_str(response.content())?;
+    let json_text = response.content()?;
+    let json_value: Value = serde_json::from_str(json_text)?;
     println!("JSON response: {}", serde_json::to_string_pretty(&json_value)?);
     
     Ok(())
@@ -241,7 +243,7 @@ impl History for MyHistory {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     let mut chatter = NormalChatter::new(token);
     let mut history = MyHistory {
@@ -262,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ds_api::{Request, Message, Role};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> ds_api::error::Result<()> {
     let token = "your_deepseek_api_token".to_string();
     
     let request = Request::basic_query_reasoner(vec![
@@ -274,7 +276,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]);
     
     let response = request.execute_nostreaming(&token).await?;
-    println!("Response: {}", response.content());
+    let content = response.content()?;
+    println!("Response: {}", content);
     
     Ok(())
 }
@@ -300,12 +303,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## 错误处理
 
-库使用 `Box<dyn std::error::Error>` 作为错误类型，可以捕获以下类型的错误：
+库使用 `ds_api::error::ApiError`（并提供便捷别名 `ds_api::error::Result`）作为错误类型，可以捕获以下类型的错误：
 
 - 网络错误（reqwest）
 - JSON 解析错误（serde_json）
 - API 错误（HTTP 状态码非 200）
-- 流式响应解析错误
+- 流式响应解析错误（包括 SSE / EventSource 层面的错误，映射为 `ApiError::EventSource(String)`）
+
+流式（SSE）响应在底层可能出现 EventSource 相关的错误，例如连接中断、非标准的 SSE 格式或解析失败。库会把这类错误以 `ApiError::EventSource(String)` 返回，字符串中包含具体的错误信息与上下文。下面示例展示在流式调用中如何针对 `EventSource` 错误做不同处理（例如记录、重试或上报）：
+
+```rust
+use ds_api::error::ApiError;
+
+// 假设 request 是一个已经构建好的 Request，并且 client/token 已准备好
+match request.execute_client_streaming(&client, &token).await {
+    Ok(mut stream) => {
+        use futures::StreamExt;
+        while let Some(chunk_res) = stream.next().await {
+            match chunk_res {
+                Ok(chunk) => {
+                    // 处理正常的流式 chunk
+                    if let Some(content) = chunk.choices.get(0).and_then(|c| c.delta.content.as_ref()) {
+                        print!("{}", content);
+                    }
+                }
+                Err(e) => match e {
+                    ApiError::EventSource(msg) => {
+                        // SSE / EventSource 层的错误（连接中断、非法数据等）
+                        eprintln!("SSE error: {}", msg);
+                        // 在此可以进行重试、退避或上报等策略
+                    }
+                    ApiError::Json(parse_err) => {
+                        // JSON 解析错误（通常是某个事件的数据无法反序列化为期望结构）
+                        eprintln!("JSON parse error in stream chunk: {}", parse_err);
+                    }
+                    ApiError::Http { status, text } => {
+                        eprintln!("HTTP error {}: {}", status, text);
+                    }
+                    other => {
+                        // 其它错误（网络、IO 等）
+                        eprintln!("Stream error: {}", other);
+                    }
+                },
+            }
+        }
+    }
+    Err(e) => {
+        // 在开启流时就失败了（例如网络、认证或立即的 HTTP 错误）
+        match e {
+            ApiError::EventSource(msg) => eprintln!("Failed to start stream (SSE): {}", msg),
+            _ => eprintln!("Failed to start stream: {}", e),
+        }
+    }
+}
+```
+
+以上模式让你可以按错误类型采取更精细的策略（例如对 SSE 错误做连接重试、对 JSON 错误记录并跳过、对 HTTP 错误进行告警），而不是只收到一个通用字符串。
 
 ## 示例
 

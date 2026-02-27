@@ -17,7 +17,7 @@
 //! use ds_api::{NormalChatter, History, Message, Role};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let mut chatter = NormalChatter::new(token);
 //!     let mut history: Vec<Message> = vec![];
@@ -53,7 +53,7 @@
 //! }
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let mut chatter = NormalChatter::new(token);
 //!     let mut history = LimitedHistory {
@@ -75,7 +75,7 @@
 //! use serde_json::Value;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let mut chatter = NormalChatter::new(token);
 //!     let mut history: Vec<Message> = vec![
@@ -148,7 +148,7 @@ impl History for Vec<Message> {
     }
 }
 
-use std::error::Error;
+use crate::error::Result;
 
 use crate::request::*;
 use crate::response::Response;
@@ -219,7 +219,7 @@ impl NormalChatter {
     /// use ds_api::{NormalChatter, History, Message, Role};
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// async fn main() -> ds_api::error::Result<()> {
     ///     let token = "your_token".to_string();
     ///     let mut chatter = NormalChatter::new(token);
     ///     let mut history: Vec<Message> = vec![];
@@ -234,7 +234,7 @@ impl NormalChatter {
         &mut self,
         user_message: T,
         history: &mut impl History,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> Result<String> {
         let user_message = Message::new(Role::User, user_message.as_ref());
         history.add_message(user_message);
 
@@ -242,10 +242,16 @@ impl NormalChatter {
             .execute_nostreaming(&self.token)
             .await?;
 
-        let assistant_message = response.choices[0].message.clone();
+        let assistant_message = response
+            .choices
+            .get(0)
+            .map(|c| c.message.clone())
+            .ok_or_else(|| {
+                crate::error::ApiError::Other("missing choice or content in response".to_string())
+            })?;
         history.add_message(assistant_message);
 
-        Ok(response.content().to_string())
+        Ok(response.content()?.to_string())
     }
 
     /// 发送聊天消息并获取 JSON 格式的响应
@@ -272,7 +278,7 @@ impl NormalChatter {
     /// use serde_json::Value;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// async fn main() -> ds_api::error::Result<()> {
     ///     let token = "your_token".to_string();
     ///     let mut chatter = NormalChatter::new(token);
     ///     let mut history: Vec<Message> = vec![
@@ -289,7 +295,7 @@ impl NormalChatter {
         &mut self,
         user_message: T,
         history: &mut impl History,
-    ) -> Result<Value, Box<dyn Error>> {
+    ) -> Result<Value> {
         let user_message = Message::new(Role::User, user_message.as_ref());
         history.add_message(user_message);
 
@@ -298,10 +304,16 @@ impl NormalChatter {
             .execute_nostreaming(&self.token)
             .await?;
 
-        let assistant_message = response.choices[0].message.clone();
+        let assistant_message = response
+            .choices
+            .get(0)
+            .map(|c| c.message.clone())
+            .ok_or_else(|| {
+                crate::error::ApiError::Other("missing choice or content in response".to_string())
+            })?;
         history.add_message(assistant_message);
 
-        let value = serde_json::from_str(response.content())?;
+        let value = serde_json::from_str(response.content()?)?;
 
         Ok(value)
     }

@@ -37,7 +37,7 @@
 //! use futures::StreamExt;
 //!
 //! # #[tokio::main]
-//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn main() -> ds_api::error::Result<()> {
 //! let token = "your_token".to_string();
 //! let client = reqwest::Client::new();
 //!
@@ -65,11 +65,14 @@
 //! # }
 //! ```
 
+use crate::error::{ApiError, Result};
 pub use crate::raw::*;
 use eventsource_stream::Eventsource;
 use futures::Stream;
 use futures::StreamExt;
-use std::error::Error;
+
+/// 默认 API base url（不包含版本前缀，路径将使用 /chat/completions）
+const DEFAULT_API_BASE: &str = "https://api.deepseek.com";
 
 /// 一个发送至 Deepseek API 的请求对象，封装了原始请求数据。
 /// 该结构体保证请求合法
@@ -226,65 +229,78 @@ impl Request {
         &self.raw
     }
 
+    /// 执行无流式（non-streaming）请求，使用指定的 `base_url`（会自动追加 `/chat/completions` path）。
+    /// 接收一个不可变的 `&reqwest::Client`，避免对外部 client 所有权的要求。
     pub async fn execute_client_baseurl_nostreaming(
         self,
-        client: &mut reqwest::Client,
-        url: &str,
+        client: &reqwest::Client,
+        base_url: &str,
         token: &str,
-    ) -> Result<ChatCompletionResponse, Box<dyn Error>> {
+    ) -> Result<ChatCompletionResponse> {
+        // 构建 url（确保不会重复斜杠）
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
         let resp = client
-            .post(url)
+            .post(&url)
             .bearer_auth(token)
             .json(&self.raw)
             .send()
             .await?;
 
-        let resp = resp.json::<ChatCompletionResponse>().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            // 尝试读取响应体文本以便诊断，若读取失败则用错误字符串占位
+            let text = resp.text().await.unwrap_or_else(|e| e.to_string());
+            return Err(ApiError::http_error(status, text));
+        }
 
-        Ok(resp)
+        let parsed = resp.json::<ChatCompletionResponse>().await?;
+        Ok(parsed)
     }
 
+    /// 便捷方法：使用默认 base URL 执行无流式请求（接收不可变的 `&Client`）。
     pub async fn execute_client_nostreaming(
         self,
-        client: &mut reqwest::Client,
+        client: &reqwest::Client,
         token: &str,
-    ) -> Result<ChatCompletionResponse, Box<dyn Error>> {
-        self.execute_client_baseurl_nostreaming(
-            client,
-            "https://api.deepseek.com/v1/chat/completions",
-            token,
-        )
-        .await
+    ) -> Result<ChatCompletionResponse> {
+        self.execute_client_baseurl_nostreaming(client, DEFAULT_API_BASE, token)
+            .await
     }
 
+    /// 在没有外部 `Client` 的情况下执行无流式请求（使用传入的 `base_url`）。
     pub async fn execute_baseurl_nostreaming(
         self,
         base_url: &str,
         token: &str,
-    ) -> Result<ChatCompletionResponse, Box<dyn Error>> {
-        let mut client = reqwest::Client::new();
-        self.execute_client_baseurl_nostreaming(&mut client, base_url, token)
+    ) -> Result<ChatCompletionResponse> {
+        let client = reqwest::Client::new();
+        self.execute_client_baseurl_nostreaming(&client, base_url, token)
             .await
     }
 
-    pub async fn execute_nostreaming(
-        self,
-        token: &str,
-    ) -> Result<ChatCompletionResponse, Box<dyn Error>> {
-        self.execute_baseurl_nostreaming("https://api.deepseek.com/chat/completions", token)
+    /// 使用默认 base URL 执行无流式请求（最常用的便捷方法）。
+    pub async fn execute_nostreaming(self, token: &str) -> Result<ChatCompletionResponse> {
+        self.execute_baseurl_nostreaming(DEFAULT_API_BASE, token)
             .await
     }
 
-    pub async fn execute_client_streaming(
+    /// 执行流式（SSE）响应请求。使用 `DEFAULT_API_BASE` 构建 URL，并对流中可能出现的解析错误进行更加明确的映射。
+    ///
+    /// 返回一个 Stream，每个 Item 是 `Result<ChatCompletionChunk, ApiError>`。
+    /// Execute a streaming request (SSE) using a custom `base_url`.
+    /// 返回一个 Stream，每个 Item 是 `Result<ChatCompletionChunk, ApiError>`。
+    pub async fn execute_client_streaming_baseurl(
         mut self,
         client: &reqwest::Client,
+        base_url: &str,
         token: &str,
-    ) -> Result<impl Stream<Item = Result<ChatCompletionChunk, Box<dyn Error>>>, Box<dyn Error>>
-    {
+    ) -> Result<impl Stream<Item = std::result::Result<ChatCompletionChunk, ApiError>>> {
         self.raw.stream = Some(true); // 确保请求中包含 stream: true
 
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         let response = client
-            .post("https://api.deepseek.com/chat/completions")
+            .post(&url)
             .bearer_auth(token)
             .json(&self.raw)
             .send()
@@ -292,8 +308,8 @@ impl Request {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await?;
-            return Err(format!("HTTP error {}: {}", status, error_text).into());
+            let error_text = response.text().await.unwrap_or_else(|e| e.to_string());
+            return Err(ApiError::http_error(status, error_text));
         }
 
         // 将响应字节流转换为 SSE 事件流
@@ -302,25 +318,38 @@ impl Request {
         // 映射每个事件：
         // - 如果是 Ok(event)，判断 event.data：
         //   - 若 data == "[DONE]"，忽略（返回 None）
-        //   - 否则尝试反序列化为 ChatCompletionChunk，成功返回 Some(Ok(chunk))，失败返回 Some(Err)
-        // - 如果是 Err(e)，返回 Some(Err(e.into()))
+        //   - 否则尝试反序列化为 ChatCompletionChunk
+        //     - 若解析成功 -> Some(Ok(chunk))
+        //     - 若解析失败 -> Some(Err(ApiError::Json(...)))
+        // - 如果 eventsource 返回错误 -> Some(Err(ApiError::Other(...)))
         let chunk_stream = event_stream.filter_map(|event_result| async move {
             match event_result {
                 Ok(event) => {
                     if event.data == "[DONE]" {
-                        None // 结束标记，不产生 item
+                        None
                     } else {
                         match serde_json::from_str::<ChatCompletionChunk>(&event.data) {
                             Ok(chunk) => Some(Ok(chunk)),
-                            Err(e) => Some(Err(Box::new(e) as Box<dyn Error>)),
+                            Err(e) => Some(Err(ApiError::Json(e))),
                         }
                     }
                 }
-                Err(e) => Some(Err(Box::new(e) as Box<dyn Error>)),
+                Err(e) => Some(Err(ApiError::EventSource(e.to_string()))),
             }
         });
 
         Ok(chunk_stream)
+    }
+
+    /// Execute a streaming request (SSE) using the default API base URL.
+    /// Convenience wrapper that delegates to `execute_client_streaming_baseurl`.
+    pub async fn execute_client_streaming(
+        self,
+        client: &reqwest::Client,
+        token: &str,
+    ) -> Result<impl Stream<Item = std::result::Result<ChatCompletionChunk, ApiError>>> {
+        self.execute_client_streaming_baseurl(client, DEFAULT_API_BASE, token)
+            .await
     }
 
     /// # Safety

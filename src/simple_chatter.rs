@@ -18,7 +18,7 @@
 //! use ds_api::SimpleChatter;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let system_prompt = "You are a helpful assistant.".to_string();
 //!     let mut chatter = SimpleChatter::new(token, system_prompt);
@@ -41,7 +41,7 @@
 //! use serde_json::Value;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let system_prompt = "You are a helpful assistant that responds in JSON format.".to_string();
 //!     let mut chatter = SimpleChatter::new(token, system_prompt);
@@ -59,13 +59,15 @@
 //! use ds_api::SimpleChatter;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!     let system_prompt = "You are a helpful assistant.".to_string();
 //!     let mut chatter = SimpleChatter::new(token, system_prompt);
 //!
 //!     // 修改系统提示词
-//!     *chatter.system_prompt_mut() = "You are a sarcastic assistant.".to_string();
+//!     if let Some(prompt) = chatter.system_prompt_mut() {
+//!         *prompt = "You are a sarcastic assistant.".to_string();
+//!     }
 //!
 //!     let response = chatter.chat("What is the weather like?").await?;
 //!     println!("Assistant: {}", response);
@@ -81,7 +83,7 @@
 //! - 系统提示词是历史记录中的第一条消息
 //!
 
-use std::error::Error;
+use crate::error::Result;
 
 use crate::{normal_chatter::NormalChatter, request::*};
 
@@ -163,7 +165,7 @@ impl SimpleChatter {
     /// use ds_api::SimpleChatter;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// async fn main() -> ds_api::error::Result<()> {
     ///     let token = "your_token".to_string();
     ///     let system_prompt = "You are a helpful assistant.".to_string();
     ///     let mut chatter = SimpleChatter::new(token, system_prompt);
@@ -174,7 +176,7 @@ impl SimpleChatter {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn chat<T: AsRef<str>>(&mut self, user_message: T) -> Result<String, Box<dyn Error>> {
+    pub async fn chat<T: AsRef<str>>(&mut self, user_message: T) -> Result<String> {
         self.chatter.chat(user_message, &mut self.history).await
     }
 
@@ -201,7 +203,7 @@ impl SimpleChatter {
     /// use serde_json::Value;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// async fn main() -> ds_api::error::Result<()> {
     ///     let token = "your_token".to_string();
     ///     let system_prompt = "You are a helpful assistant that responds in JSON format.".to_string();
     ///     let mut chatter = SimpleChatter::new(token, system_prompt);
@@ -212,10 +214,7 @@ impl SimpleChatter {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn chat_json<T: AsRef<str>>(
-        &mut self,
-        user_message: T,
-    ) -> Result<serde_json::Value, Box<dyn Error>> {
+    pub async fn chat_json<T: AsRef<str>>(&mut self, user_message: T) -> Result<serde_json::Value> {
         self.chatter
             .chat_json(user_message, &mut self.history)
             .await
@@ -227,7 +226,7 @@ impl SimpleChatter {
     ///
     /// # 返回
     ///
-    /// 返回系统提示词字符串的可变引用。
+    /// 返回 `Option<&mut String>`：当 `history` 为空或系统提示词不可用时返回 `None`。
     ///
     /// # 示例
     ///
@@ -235,13 +234,15 @@ impl SimpleChatter {
     /// use ds_api::SimpleChatter;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// async fn main() -> ds_api::error::Result<()> {
     ///     let token = "your_token".to_string();
     ///     let system_prompt = "You are a helpful assistant.".to_string();
     ///     let mut chatter = SimpleChatter::new(token, system_prompt);
     ///
-    ///     // 修改系统提示词
-    ///     *chatter.system_prompt_mut() = "You are a sarcastic assistant.".to_string();
+    ///     // 修改系统提示词（安全用法）
+    ///     if let Some(prompt) = chatter.system_prompt_mut() {
+    ///         *prompt = "You are a sarcastic assistant.".to_string();
+    ///     }
     ///
     ///     let response = chatter.chat("What is the weather like?").await?;
     ///     println!("Assistant: {}", response);
@@ -249,7 +250,7 @@ impl SimpleChatter {
     ///     Ok(())
     /// }
     /// ```
-    pub fn system_prompt_mut(&mut self) -> &mut String {
-        self.history[0].content.as_mut().unwrap()
+    pub fn system_prompt_mut(&mut self) -> Option<&mut String> {
+        self.history.get_mut(0).and_then(|m| m.content.as_mut())
     }
 }
