@@ -33,19 +33,20 @@
 //! ## 流式响应
 //!
 //! ```rust,no_run
-//! use ds_api::{Request, Message, Role};
+//! use ds_api::{Request, Message, Role, DeepseekClient};
 //! use futures::StreamExt;
 //!
 //! # #[tokio::main]
 //! # async fn main() -> ds_api::error::Result<()> {
 //! let token = "your_token".to_string();
-//! let client = reqwest::Client::new();
 //!
 //! let request = Request::basic_query(vec![
 //!     Message::new(Role::User, "Tell me a story.")
 //! ]);
 //!
-//! let stream = request.execute_client_streaming(&client, &token).await?;
+//! // 使用 DeepseekClient 发送并接收流式响应
+//! let ds_client = DeepseekClient::new(token.clone());
+//! let mut stream = ds_client.send_stream(request).await?;
 //!
 //! // 使用 pin_mut! 宏来固定流
 //! use futures::pin_mut;

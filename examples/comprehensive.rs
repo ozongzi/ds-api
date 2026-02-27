@@ -11,8 +11,8 @@
 
 use ds_api::error::Result;
 use ds_api::{
-    ChatCompletionResponse, History, Message, Model, NormalChatter, Request, Response, Role,
-    SimpleChatter, Tool, ToolChoiceType,
+    ChatCompletionResponse, DeepseekClient, History, Message, Model, NormalChatter, Request,
+    Response, Role, SimpleChatter, Tool, ToolChoiceType,
 };
 use futures::StreamExt;
 use reqwest::Client;
@@ -40,8 +40,9 @@ async fn example_basic_request() -> Result<()> {
         .temperature(0.7)
         .max_tokens(100);
 
-    // 执行请求
-    let response: ChatCompletionResponse = request.execute_nostreaming(&token).await?;
+    // 执行请求（通过 DeepseekClient 发送）
+    let ds_client = DeepseekClient::new(token.clone());
+    let response: ChatCompletionResponse = ds_client.send(request).await?;
     let content = response.content()?;
     println!("响应内容: {}", content);
     println!("模型: {:?}", response.model);
@@ -56,7 +57,6 @@ async fn example_streaming_response() -> Result<()> {
     println!("=== 示例 2: 流式响应 ===");
 
     let token = get_token()?;
-    let client = Client::new();
 
     // 创建流式请求
     let request = Request::basic_query(vec![Message::new(
@@ -66,7 +66,8 @@ async fn example_streaming_response() -> Result<()> {
 
     println!("开始接收流式响应...");
 
-    let stream = request.execute_client_streaming(&client, &token).await?;
+    let ds_client = DeepseekClient::new(token.clone());
+    let stream = ds_client.send_stream(request).await?;
     let mut full_response = String::new();
 
     // 使用 pin! 宏来固定流
@@ -126,7 +127,8 @@ async fn example_tool_calling() -> Result<()> {
         .add_tool(weather_tool)
         .tool_choice_type(ToolChoiceType::Auto);
 
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
 
     println!("响应: {:?}", response);
 
@@ -170,7 +172,8 @@ async fn example_json_mode() -> Result<()> {
         .json() // 启用 JSON 模式
         .temperature(0.3);
 
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
 
     // 解析 JSON 响应
     let json_text = response.content()?;
@@ -276,11 +279,11 @@ async fn example_reasoner_model() -> Result<()> {
     ])
     .max_tokens(300);
 
-    let response = request.execute_nostreaming(&token).await?;
+    let ds_client = DeepseekClient::new(token.clone());
+    let response = ds_client.send(request).await?;
 
     println!("Reasoner 模型响应:");
-    let content = response.content()?;
-    println!("{}", content);
+    println!("{}", response.content()?);
     println!();
 
     Ok(())
@@ -295,7 +298,8 @@ async fn example_error_handling() -> Result<()> {
 
     let request = Request::basic_query(vec![Message::new(Role::User, "Hello")]);
 
-    match request.execute_nostreaming(&invalid_token).await {
+    let ds_client = DeepseekClient::new(invalid_token.clone());
+    match ds_client.send(request).await {
         Ok(response) => {
             let content = response.content()?;
             println!("意外成功: {}", content);

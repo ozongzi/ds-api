@@ -152,7 +152,6 @@ use crate::error::Result;
 
 use crate::request::*;
 use crate::response::Response;
-use reqwest::Client;
 use serde_json::Value;
 
 /// 支持自定义历史记录管理的聊天客户端
@@ -170,11 +169,12 @@ use serde_json::Value;
 /// - 历史记录中的第一条消息通常是系统提示词（System Prompt）
 /// - 后续消息是用户（User）或助手（Assistant）的对话内容
 /// - 需要手动管理上下文长度，避免超过模型限制
+/// 高级聊天客户端封装，使用 `DeepseekClient` 做为底层 HTTP + 配置封装。
+///
+/// 该结构体不直接暴露 token 或 reqwest::Client；相反通过 `DeepseekClient` 提供更一致的使用体验。
 pub struct NormalChatter {
-    /// DeepSeek API 访问令牌
-    pub token: String,
-    /// HTTP 客户端实例
-    pub client: Client,
+    /// 底层的 Deepseek 客户端封装，包含 token、base_url 与 reqwest::Client
+    pub client: DeepseekClient,
 }
 
 impl NormalChatter {
@@ -192,11 +192,16 @@ impl NormalChatter {
     /// let token = "your_deepseek_api_token".to_string();
     /// let chatter = NormalChatter::new(token);
     /// ```
+    /// 使用 token 创建一个新的 NormalChatter（内部创建 DeepseekClient）。
     pub fn new(token: String) -> Self {
         Self {
-            token,
-            client: Client::new(),
+            client: DeepseekClient::new(token),
         }
+    }
+
+    /// 使用已存在的 `DeepseekClient` 创建 NormalChatter（便于在外部共享 client/config）。
+    pub fn from_client(client: DeepseekClient) -> Self {
+        Self { client }
     }
 
     /// 发送聊天消息并获取文本响应
@@ -238,9 +243,9 @@ impl NormalChatter {
         let user_message = Message::new(Role::User, user_message.as_ref());
         history.add_message(user_message);
 
-        let response = Request::basic_query(history.get_history())
-            .execute_nostreaming(&self.token)
-            .await?;
+        // 构造请求并通过 DeepseekClient 发送
+        let request = Request::basic_query(history.get_history());
+        let response = self.client.send(request).await?;
 
         let assistant_message = response
             .choices
@@ -299,10 +304,9 @@ impl NormalChatter {
         let user_message = Message::new(Role::User, user_message.as_ref());
         history.add_message(user_message);
 
-        let response = Request::basic_query(history.get_history())
-            .json()
-            .execute_nostreaming(&self.token)
-            .await?;
+        // 构造请求并通过 DeepseekClient 发送（启用 JSON 模式）
+        let request = Request::basic_query(history.get_history()).json();
+        let response = self.client.send(request).await?;
 
         let assistant_message = response
             .choices

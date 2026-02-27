@@ -25,7 +25,9 @@
 //!         Message::new(Role::User, "Hello, how are you?")
 //!     ]);
 //!
-//!     let response = request.execute_nostreaming(&token).await?;
+//!     // 使用 DeepseekClient 发送请求（推荐）
+//!     let ds_client = ds_api::DeepseekClient::new(token.clone());
+//!     let response = ds_client.send(request).await?;
 //!     // 注意：`Response::content()` 现在返回 `Result<&str, ApiError>`，需处理潜在错误
 //!     let content = response.content()?;
 //!     println!("Response: {}", content);
@@ -54,6 +56,7 @@ pub mod simple_chatter;
 
 /// 重新导出常用的类型，方便用户使用
 pub use normal_chatter::{History, NormalChatter};
+pub use request::DeepseekClient;
 pub use request::Request;
 pub use response::Response;
 pub use simple_chatter::SimpleChatter;
