@@ -7,7 +7,7 @@ authors = ["ozongzi <ozongzi@icloud.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ozongzi/ds-api"
 readme = "README.md"
-keywords = ["deepseek", "api", "ai", "chat", "llm", "openai"]
+keywords = ["deepseek", "api", "ai", "chat", "llm"]
 categories = ["api-bindings", "web-programming"]
 
 [dependencies]
