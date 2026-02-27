@@ -9,6 +9,7 @@
 //! 6. 使用 NormalChatter 和自定义历史记录
 //! 7. 使用 DeepSeek Reasoner 模型
 
+use ds_api::error::Result;
 use ds_api::{
     ChatCompletionResponse, History, Message, Model, NormalChatter, Request, Response, Role,
     SimpleChatter, Tool, ToolChoiceType,
@@ -16,18 +17,17 @@ use ds_api::{
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::json;
-use std::error::Error;
 
 const TOKEN_ENV_VAR: &str = "DEEPSEEK_API_KEY";
 
 /// 获取 API 令牌
-fn get_token() -> Result<String, Box<dyn Error>> {
+fn get_token() -> Result<String> {
     std::env::var(TOKEN_ENV_VAR)
         .map_err(|_| format!("请设置环境变量 {} 或修改代码中的 TOKEN 常量", TOKEN_ENV_VAR).into())
 }
 
 /// 示例 1: 基本请求构建和执行
-async fn example_basic_request() -> Result<(), Box<dyn Error>> {
+async fn example_basic_request() -> Result<()> {
     println!("=== 示例 1: 基本请求构建和执行 ===");
 
     let token = get_token()?;
@@ -42,8 +42,8 @@ async fn example_basic_request() -> Result<(), Box<dyn Error>> {
 
     // 执行请求
     let response: ChatCompletionResponse = request.execute_nostreaming(&token).await?;
-
-    println!("响应内容: {}", response.content());
+    let content = response.content()?;
+    println!("响应内容: {}", content);
     println!("模型: {:?}", response.model);
     println!("Token 使用: {:?}", response.usage);
     println!();
@@ -52,7 +52,7 @@ async fn example_basic_request() -> Result<(), Box<dyn Error>> {
 }
 
 /// 示例 2: 流式响应
-async fn example_streaming_response() -> Result<(), Box<dyn Error>> {
+async fn example_streaming_response() -> Result<()> {
     println!("=== 示例 2: 流式响应 ===");
 
     let token = get_token()?;
@@ -76,7 +76,7 @@ async fn example_streaming_response() -> Result<(), Box<dyn Error>> {
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                if let Some(content) = chunk.choices[0].delta.content.as_ref() {
+                if let Some(content) = chunk.choices.get(0).and_then(|c| c.delta.content.as_ref()) {
                     print!("{}", content);
                     full_response.push_str(content);
                 }
@@ -92,7 +92,7 @@ async fn example_streaming_response() -> Result<(), Box<dyn Error>> {
 }
 
 /// 示例 3: 工具调用
-async fn example_tool_calling() -> Result<(), Box<dyn Error>> {
+async fn example_tool_calling() -> Result<()> {
     println!("=== 示例 3: 工具调用 ===");
 
     let token = get_token()?;
@@ -131,14 +131,20 @@ async fn example_tool_calling() -> Result<(), Box<dyn Error>> {
     println!("响应: {:?}", response);
 
     // 检查是否有工具调用
-    if let Some(tool_calls) = &response.choices[0].message.tool_calls {
-        println!("\n检测到工具调用:");
-        for tool_call in tool_calls {
-            println!("  函数: {}", tool_call.function.name);
-            println!("  参数: {}", tool_call.function.arguments);
+    if let Some(choice) = response.choices.get(0) {
+        if let Some(tool_calls) = &choice.message.tool_calls {
+            println!("\n检测到工具调用:");
+            for tool_call in tool_calls {
+                println!("  函数: {}", tool_call.function.name);
+                println!("  参数: {}", tool_call.function.arguments);
+            }
+        } else {
+            let content = response.content()?;
+            println!("\n没有工具调用，直接回复: {}", content);
         }
     } else {
-        println!("\n没有工具调用，直接回复: {}", response.content());
+        let content = response.content()?;
+        println!("\n响应缺少选择，内容: {}", content);
     }
 
     println!();
@@ -147,7 +153,7 @@ async fn example_tool_calling() -> Result<(), Box<dyn Error>> {
 }
 
 /// 示例 4: JSON 模式响应
-async fn example_json_mode() -> Result<(), Box<dyn Error>> {
+async fn example_json_mode() -> Result<()> {
     println!("=== 示例 4: JSON 模式响应 ===");
 
     let token = get_token()?;
@@ -167,7 +173,8 @@ async fn example_json_mode() -> Result<(), Box<dyn Error>> {
     let response = request.execute_nostreaming(&token).await?;
 
     // 解析 JSON 响应
-    let json_value: serde_json::Value = serde_json::from_str(response.content())?;
+    let json_text = response.content()?;
+    let json_value: serde_json::Value = serde_json::from_str(json_text)?;
 
     println!("JSON 响应:");
     println!("{}", serde_json::to_string_pretty(&json_value)?);
@@ -177,7 +184,7 @@ async fn example_json_mode() -> Result<(), Box<dyn Error>> {
 }
 
 /// 示例 5: 使用 SimpleChatter
-async fn example_simple_chatter() -> Result<(), Box<dyn Error>> {
+async fn example_simple_chatter() -> Result<()> {
     println!("=== 示例 5: 使用 SimpleChatter ===");
 
     let token = get_token()?;
@@ -221,7 +228,7 @@ impl History for LimitedHistory {
 }
 
 /// 示例 6: 使用 NormalChatter 和自定义历史记录
-async fn example_normal_chatter() -> Result<(), Box<dyn Error>> {
+async fn example_normal_chatter() -> Result<()> {
     println!("=== 示例 6: 使用 NormalChatter 和自定义历史记录 ===");
 
     let token = get_token()?;
@@ -258,7 +265,7 @@ async fn example_normal_chatter() -> Result<(), Box<dyn Error>> {
 }
 
 /// 示例 7: 使用 DeepSeek Reasoner 模型
-async fn example_reasoner_model() -> Result<(), Box<dyn Error>> {
+async fn example_reasoner_model() -> Result<()> {
     println!("=== 示例 7: 使用 DeepSeek Reasoner 模型 ===");
 
     let token = get_token()?;
@@ -272,14 +279,15 @@ async fn example_reasoner_model() -> Result<(), Box<dyn Error>> {
     let response = request.execute_nostreaming(&token).await?;
 
     println!("Reasoner 模型响应:");
-    println!("{}", response.content());
+    let content = response.content()?;
+    println!("{}", content);
     println!();
 
     Ok(())
 }
 
 /// 示例 8: 错误处理
-async fn example_error_handling() -> Result<(), Box<dyn Error>> {
+async fn example_error_handling() -> Result<()> {
     println!("=== 示例 8: 错误处理 ===");
 
     // 使用无效的令牌测试错误处理
@@ -289,7 +297,8 @@ async fn example_error_handling() -> Result<(), Box<dyn Error>> {
 
     match request.execute_nostreaming(&invalid_token).await {
         Ok(response) => {
-            println!("意外成功: {}", response.content());
+            let content = response.content()?;
+            println!("意外成功: {}", content);
         }
         Err(e) => {
             println!("预期中的错误: {}", e);
@@ -303,7 +312,7 @@ async fn example_error_handling() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     println!("ds-api 库综合示例");
     println!("==================\n");
 

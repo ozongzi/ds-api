@@ -1,9 +1,9 @@
+use ds_api::error::Result;
 use ds_api::request::*;
 use ds_api::response::*;
-use std::error::Error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     let mut token = String::new();
     println!("Please input your API token:");
     std::io::stdin().read_line(&mut token).unwrap();
@@ -16,7 +16,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .execute_nostreaming(&token)
     .await?;
 
-    println!("Response :{}", response.content());
+    let content = response.content()?;
+    println!("Response :{}", content);
 
     Ok(())
 }

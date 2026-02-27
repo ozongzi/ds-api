@@ -14,11 +14,11 @@
 //!
 //! ## 快速开始
 //!
-//! ```rust,no_run
+//! ```no_run
 //! use ds_api::{Request, Message, Role, Response};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> ds_api::error::Result<()> {
 //!     let token = "your_deepseek_api_token".to_string();
 //!
 //!     let request = Request::basic_query(vec![
@@ -26,7 +26,9 @@
 //!     ]);
 //!
 //!     let response = request.execute_nostreaming(&token).await?;
-//!     println!("Response: {}", response.content());
+//!     // 注意：`Response::content()` 现在返回 `Result<&str, ApiError>`，需处理潜在错误
+//!     let content = response.content()?;
+//!     println!("Response: {}", content);
 //!     Ok(())
 //! }
 //! ```
@@ -43,6 +45,7 @@
 //!
 //! 查看各个模块的文档和 `examples/` 目录获取更多使用示例。
 
+pub mod error;
 pub mod normal_chatter;
 pub mod raw;
 pub mod request;
