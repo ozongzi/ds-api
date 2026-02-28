@@ -1,3 +1,64 @@
+//! ds-api — Rust client for DeepSeek
+//!
+//! Quickstart
+//!
+//! Example: simple non-streaming request
+//! ```no_run
+//! use ds_api::{ApiClient, ApiRequest};
+//! use ds_api::raw::request::message::Message;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Set DEEPSEEK_API_KEY in your environment before running this example.
+//!     let token = std::env::var("DEEPSEEK_API_KEY")?;
+//!     let client = ApiClient::new(token);
+//!
+//!     let req = ApiRequest::deepseek_chat(vec![
+//!         Message::new(ds_api::raw::request::message::Role::User, "Hello from Rust"),
+//!     ])
+//!     .max_tokens(150)
+//!     .json();
+//!
+//!     let resp = client.send(req).await?;
+//!     println!(\"Response content: {:?}\", resp.content()?);
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Example: DeepseekAgent with a minimal tool
+//! ```no_run
+//! use ds_api::{DeepseekAgent, tool};
+//! use futures::StreamExt;
+//! use serde_json::json;
+//!
+//! struct EchoTool;
+//!
+//! #[tool]
+//! impl ds_api::Tool for EchoTool {
+//!     // Example tool method: echo a string back as JSON.
+//!     async fn echo(&self, input: String) -> serde_json::Value {
+//!         json!({ "echo": input })
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let token = std::env::var(\"DEEPSEEK_API_KEY\").unwrap();
+//!     let agent = DeepseekAgent::new(token).add_tool(EchoTool);
+//!
+//!     let mut s = agent.chat(\"Please echo: hello\");
+//!     while let Some(ev) = s.next().await {
+//!         if let Some(content) = &ev.content {
+//!             println!(\"Assistant: {}\", content);
+//!         }
+//!         for tc in &ev.tool_calls {
+//!             println!(\"Tool call: {} -> {}\", tc.name, tc.result);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! See the crate README for more examples and migration notes.
 pub mod agent;
 pub mod api;
 pub mod conversation;

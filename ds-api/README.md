@@ -3,6 +3,64 @@ ds-api-workspace/ds-api/README.md
 
 This crate provides a layered, ergonomic Rust client for the DeepSeek chat API.
 
+Quick Start
+- Requirements: Rust toolchain and an environment variable `DEEPSEEK_API_KEY` with your API token.
+- The crate exposes both low-level `raw` types and higher-level ergonomics via `ApiRequest`, `ApiClient`, `DeepseekConversation`, and `DeepseekAgent`.
+
+Example: simple non-streaming request (async, requires Tokio)
+```rust
+use ds_api::{ApiClient, ApiRequest};
+use ds_api::raw::request::message::Message;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let token = std::env::var("DEEPSEEK_API_KEY")?;
+    let client = ApiClient::new(token);
+
+    let req = ApiRequest::deepseek_chat(vec![
+        Message::new(ds_api::raw::request::message::Role::User, "Hello from Rust"),
+    ])
+    .max_tokens(150)
+    .json();
+
+    let resp = client.send(req).await?;
+    println!("Response content: {:?}", resp.content()?);
+    Ok(())
+}
+```
+
+Example: minimal `DeepseekAgent` with a sample tool
+```rust
+use ds_api::{DeepseekAgent, tool};
+use futures::StreamExt;
+use serde_json::json;
+
+struct EchoTool;
+
+#[tool]
+impl ds_api::Tool for EchoTool {
+    async fn echo(&self, input: String) -> serde_json::Value {
+        json!({ "echo": input })
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let token = std::env::var("DEEPSEEK_API_KEY").unwrap();
+    let agent = DeepseekAgent::new(token).add_tool(EchoTool);
+
+    let mut s = agent.chat("Please echo: hello");
+    while let Some(ev) = s.next().await {
+        if let Some(content) = &ev.content {
+            println!("Assistant: {}", content);
+        }
+        for tc in &ev.tool_calls {
+            println!("Tool call: {} -> {}", tc.name, tc.result);
+        }
+    }
+}
+```
+
 High-level design
 - raw — low-level types that mirror the API JSON (kept under `ds_api::raw` but not recommended).
 - api — safe, chainable request builder and HTTP client (`ApiRequest`, `ApiClient`).
