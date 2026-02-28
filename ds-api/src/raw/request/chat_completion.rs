@@ -85,7 +85,9 @@ pub struct ChatCompletionRequest {
     /// - `none`: the model will not call tools and will produce a normal message.
     /// - `auto`: the model can choose to produce a message or call one or more tools.
     /// - `required`: the model must call one or more tools.
+    ///
     /// Specifying a particular tool via `{"type":"function","function":{"name":"my_function"}}` forces the model to call that tool.
+    ///
     /// Default is `none` when no tools exist; when tools exist the default is `auto`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
