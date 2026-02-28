@@ -24,7 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .json();
 
     let resp = client.send(req).await?;
-    println!("Response content: {:?}", resp.content()?);
+    // Print debug representation of the response; adapt to your needs.
+    println!("Response: {:?}", resp);
     Ok(())
 }
 ```
@@ -112,7 +113,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .json();
 
     let resp = client.send(req).await?;
-    println!("Response content: {}", resp.content()?);
+    // Print debug representation of the response; adapt to your needs.
+    println!("Response: {:?}", resp);
     Ok(())
 }
 ```
