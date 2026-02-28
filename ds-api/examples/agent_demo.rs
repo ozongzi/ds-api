@@ -42,7 +42,10 @@ async fn main() {
             println!("💬 {}", content);
         }
         for tc in &response.tool_calls {
-            println!("🔧 调用 {}({}) → {}", tc.name, tc.args, tc.result);
+            println!("🔧 调用 {}({})", tc.name, tc.args);
+            if tc.result != serde_json::Value::Null {
+                println!("-> {}", tc.result);
+            }
         }
     }
 }
