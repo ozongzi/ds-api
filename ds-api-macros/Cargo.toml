@@ -2,6 +2,11 @@
 name = "ds-api-macros"
 version = "0.1.0"
 edition = "2024"
+description = "Procedural macros for ds-api (provides the `tool` macro and related helpers)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ozongzi/ds-api"
+readme = "../README.md"
+authors = ["ozongzi <ozongzi@icloud.com>"]
 
 [lib]
 proc-macro = true
