@@ -146,14 +146,33 @@ impl Stream for AgentStream {
                                 }));
                             } else {
                                 // 有 tool calls：
-                                // 1. 先 yield content
-                                // 2. 转入 ExecutingTools 状态
+                                // 我们希望第一次 yield 返回 content + tool call 请求（preview），
+                                // 第二次 yield 返回工具的执行结果。
                                 let content = fetch.content.clone();
-                                let fut = Box::pin(execute_tools(agent, fetch.raw_tool_calls));
+
+                                // fetch.raw_tool_calls is owned here; take it for preview and clone for execution
+                                let raw_calls_owned = fetch.raw_tool_calls;
+
+                                // build preview events: same id/name/args but result = null
+                                let preview_events: Vec<ToolCallEvent> = raw_calls_owned
+                                    .iter()
+                                    .map(|tc| ToolCallEvent {
+                                        id: tc.id.clone(),
+                                        name: tc.function.name.clone(),
+                                        args: serde_json::from_str(&tc.function.arguments)
+                                            .unwrap_or(serde_json::Value::Null),
+                                        result: serde_json::Value::Null,
+                                    })
+                                    .collect();
+
+                                // clone raw calls for execution
+                                let exec_calls = raw_calls_owned.clone();
+
+                                let fut = Box::pin(execute_tools(agent, exec_calls));
                                 this.state = AgentStreamState::ExecutingTools(fut);
                                 return Poll::Ready(Some(AgentResponse {
                                     content,
-                                    tool_calls: vec![],
+                                    tool_calls: preview_events,
                                 }));
                             }
                         }
