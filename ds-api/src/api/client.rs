@@ -4,7 +4,7 @@ use eventsource_stream::Eventsource;
 use futures::{StreamExt, stream::BoxStream};
 use reqwest::Client;
 
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use super::request::ApiRequest;
 use crate::error::{ApiError, Result};
