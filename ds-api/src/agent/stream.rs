@@ -43,6 +43,10 @@ impl AgentStream {
             state: AgentStreamState::Idle,
         }
     }
+
+    pub fn into_agent(self) -> Option<DeepseekAgent> {
+        self.agent
+    }
 }
 
 impl Stream for AgentStream {
