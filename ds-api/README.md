@@ -105,7 +105,7 @@ println!("Assistant: {:?}", reply);
 Tool functions are declared with the `#[tool]` macro.
 
 ```ds-api-workspace/ds-api/examples/agent_demo.rs#L1-200
-use ds_api::{DeepseekAgent, tool_macro as tool};
+use ds_api::{DeepseekAgent, tool};
 use futures::StreamExt;
 use serde_json::json;
 

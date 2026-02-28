@@ -202,7 +202,7 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #[async_trait::async_trait]
-        impl ds_api::tool::Tool for #self_ty {
+        impl ds_api::tool_trait::Tool for #self_ty {
             fn raw_tools(&self) -> Vec<ds_api::raw::request::tool::Tool> {
                 vec![#(#raw_tools_body),*]
             }

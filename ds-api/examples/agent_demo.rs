@@ -1,4 +1,4 @@
-use ds_api::{DeepseekAgent, tool_macro as tool};
+use ds_api::{DeepseekAgent, tool};
 use futures::StreamExt;
 use serde_json::json;
 
