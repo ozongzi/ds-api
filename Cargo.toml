@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "ds-api",
+    "ds-api-macros",
+]
+resolver = "2"
