@@ -1,34 +1,34 @@
 use serde::{Deserialize, Serialize};
 
-// 统一的消息结构体
-// 该结构体同时用于请求中的 messages 数组和响应中的 message 字段。
-// 所有字段均为可选，以覆盖不同角色和场景的需求。
+// Unified message struct
+// This struct is used both for the `messages` array in requests and the `message` field in responses.
+// All fields are optional to cover different roles and scenarios.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Message {
     /// default role is User
     pub role: Role,
 
-    /// content 在 assistant 消息可能为 null（仅 tool_calls 时）
+    /// The content may be null for assistant messages (only when `tool_calls` are present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
 
-    /// 用于标识用户/函数名称（可选）
+    /// Optional name to identify a user or function
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// 当 role = "tool" 时必须提供，关联之前的工具调用 ID
+    /// Required when role = "tool"; links to the previous tool call ID
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 
-    /// 当 role = "assistant" 且模型请求调用工具时包含此字段
+    /// Present when role = "assistant" and the model requested tool calls
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
 
-    /// 模型推理过程的内容（仅在响应中可能包含）
+    /// Reasoning content produced by the model (may appear only in responses)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
 
-    /// Beta 功能：设置此参数为 true，来强制模型在其回答中以此 assistant 消息中提供的前缀内容开始
+    /// Beta: if true, forces the model to begin its reply with the prefix content provided in this assistant message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefix: Option<bool>,
 }
@@ -55,7 +55,7 @@ impl Message {
     }
 }
 
-// 角色枚举（包含 Tool 变体）
+// Role enum (includes Tool variant)
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -66,7 +66,7 @@ pub enum Role {
     Tool,
 }
 
-// 工具调用结构体（请求和响应中复用）
+// Tool call struct (reused in requests and responses)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
     pub id: String,
@@ -83,5 +83,5 @@ pub enum ToolType {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
-    pub arguments: String, // JSON 字符串
+    pub arguments: String, // JSON string
 }

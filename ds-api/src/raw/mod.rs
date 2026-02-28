@@ -1,16 +1,16 @@
-//! 原始 API 数据结构模块
+//! Raw API data structures
 //!
-//! 提供与 DeepSeek API 直接对应的原始数据结构，这些结构体直接映射到 API 的 JSON 格式。
-//! 这个模块适合需要直接控制 API 请求和响应的用户。
+//! This module provides the raw data structures that map directly to the DeepSeek API's JSON schema.
+//! These types are intended for users who need precise control over request and response payloads.
 //!
-//! # 模块结构
+//! # Module layout
 //!
 //! - [`request`]
 //! - [`response`]
 //!
-//! # 主要类型
+//! # Main types
 //!
-//! ## 请求类型
+//! ## Request types
 //!
 //! - [`ChatCompletionRequest`]
 //! - [`Message`]
@@ -21,32 +21,32 @@
 //! - [`Stop`]
 //! - [`StreamOptions`]
 //!
-//! ## 响应类型
+//! ## Response types
 //!
 //! - [`ChatCompletionResponse`]
 //! - [`ChatCompletionChunk`]
 //! - [`Choice`]
 //! - [`Usage`]
 //!
-//! # 使用场景
+//! # Use cases
 //!
-//! 使用原始数据结构适合以下场景：
+//! Use these raw structures when you need one of the following:
 //!
-//! 1. **需要完全控制 API 请求**：直接设置所有字段
-//! 2. **高级功能使用**：如工具调用、推理模式等
-//! 3. **性能优化**：避免构建器的开销
-//! 4. **与现有代码集成**：直接使用 serde 序列化/反序列化
+//! 1. Full control over the API request payload (set every field explicitly).
+//! 2. Advanced features such as tool/function calls or reasoning modes.
+//! 3. Performance optimizations where avoiding builder overhead matters.
+//! 4. Integration with existing code that expects direct Serde serialization/deserialization.
 //!
-//! # 示例
+//! # Examples
 //!
-//! ## 基本使用
+//! The following examples illustrate common usage patterns with the raw types.
 //!
 //! ```rust
 //! use ds_api::raw::{ChatCompletionRequest, Message, Model, Role};
 //! use serde_json::json;
 //!
 //! fn main() {
-//!     // 示例 1: 基本聊天补全请求
+//!     // Example 1: Basic chat completion request
 //!     let basic_request = ChatCompletionRequest {
 //!         messages: vec![
 //!             Message::new(Role::System, "You are a helpful assistant."),
@@ -63,7 +63,7 @@
 //!     let json = serde_json::to_string_pretty(&basic_request).unwrap();
 //!     println!("{}\n", json);
 //!
-//!     // 示例 2: 带工具调用的请求
+//!     // Example 2: Request with a tool/function definition
 //!     use ds_api::raw::{Tool, ToolChoice, ToolChoiceType, ToolType, Function};
 //!
 //!     let tool_request = ChatCompletionRequest {
@@ -98,7 +98,7 @@
 //!     let json = serde_json::to_string_pretty(&tool_request).unwrap();
 //!     println!("{}\n", json);
 //!
-//!     // 示例 3: 使用 DeepSeek Reasoner 模型
+//!     // Example 3: Using the Deepseek Reasoner model
 //!     use ds_api::raw::{Thinking, ThinkingType};
 //!
 //!     let reasoner_request = ChatCompletionRequest {
@@ -120,7 +120,7 @@
 //!     let json = serde_json::to_string_pretty(&reasoner_request).unwrap();
 //!     println!("{}\n", json);
 //!
-//!     // 示例 4: JSON 模式响应格式
+//!     // Example 4: JSON response format
 //!     use ds_api::raw::{ResponseFormat, ResponseFormatType};
 //!
 //!     let json_request = ChatCompletionRequest {
@@ -144,9 +144,9 @@
 //! }
 //! ```
 //!
-//! # 序列化/反序列化
+//! # Serialization / Deserialization
 //!
-//! 所有结构体都实现了 `Serialize` 和 `Deserialize` trait，可以直接使用 `serde_json` 进行序列化和反序列化：
+//! All structs implement `Serialize` and `Deserialize` and can be used with `serde_json` directly:
 //!
 //! ```rust
 //! use ds_api::raw::{ChatCompletionRequest, Message, Model, Role};
@@ -160,10 +160,11 @@
 //! let parsed_request: ChatCompletionRequest = serde_json::from_str(&json_string).unwrap();
 //! ```
 //!
-//! # 与高级 API 的关系
+//! # Relationship to higher-level APIs
 //!
-//! 高级 API（如 [`Request`](../request/struct.Request.html)）内部使用这些原始数据结构，
-//! 但提供了更友好的构建器接口和验证逻辑。如果你需要更简单的使用方式，请
+//! The higher-level APIs (for example, the builder-style `Request` types) are implemented on top
+//! of these raw structures and provide ergonomic builders and validation. If you prefer an easier
+//! or more opinionated interface, consider using the higher-level APIs instead.
 pub mod request;
 pub mod response;
 

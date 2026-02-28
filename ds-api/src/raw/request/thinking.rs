@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Thinking {
-    /// 如果设为 enabled，则使用思考模式。如果设为 disabled，则使用非思考模式
+    /// If set to `enabled`, the thinking (reasoning) mode will be used. If set to `disabled`, the non-thinking mode will be used.
     pub r#type: ThinkingType,
 }
 

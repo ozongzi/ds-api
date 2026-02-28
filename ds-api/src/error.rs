@@ -1,51 +1,53 @@
-//! 统一的错误类型
+//! Unified error types
 //!
-//! 该模块使用 `thiserror` 提供库内部统一的 `ApiError` 类型并导出通用 `Result<T>` 别名。
-//! 目标：把库中散落的各种错误（例如 `Box<dyn Error>`、`reqwest::Error`、`serde_json::Error`）统一到一个基于 `thiserror` 的 `ApiError`，并导出便捷的 `Result<T>` 别名，方便 `?` 自动转换与更友好的错误展示。
+//! This module uses `thiserror` to provide a unified `ApiError` type for the crate and exports a
+//! convenient `Result<T>` alias. The goal is to centralize disparate error sources (for example,
+//! `Box<dyn Error>`, `reqwest::Error`, `serde_json::Error`) into a single `ApiError` so that `?`
+//! conversions are simpler and error messages are more consistent.
 
 use thiserror::Error;
 
-/// 统一的错误类型，覆盖常见的错误来源并保留一个通用字符串变体用于快速转换。
+/// Unified error type covering common error sources and including a generic string variant for easy conversions.
 #[derive(Error, Debug)]
 pub enum ApiError {
-    /// HTTP 层面的失败（当我们想保留状态码与响应文本时使用）
+    /// HTTP-level failure (useful when preserving status code and response body text).
     #[error("HTTP error {status}: {text}")]
     Http {
         status: reqwest::StatusCode,
         text: String,
     },
 
-    /// reqwest 网络/请求错误
+    /// Network/request error from reqwest.
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
-    /// serde_json 解析/序列化错误
+    /// JSON (serde_json) serialization/deserialization error.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// EventSource / SSE 处理错误（来自 `eventsource-stream` crate）
-    /// 以字符串形式保存错误信息（避免直接依赖具体 crate 的错误类型签名）
+    /// EventSource / SSE handling error (originating from the `eventsource-stream` crate).
+    /// Stored as a string to avoid depending on the concrete error type signature.
     #[error("EventSource error: {0}")]
     EventSource(String),
 
-    /// IO 错误（保底）
+    /// IO error (fallback).
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// 通用字符串错误（方便从 `String` / `&str` 直接转换）
+    /// Generic string error (convenient for converting from `String` / `&str`).
     #[error("{0}")]
     Other(String),
 
-    /// 未知或占位错误
+    /// Unknown or placeholder error.
     #[error("Unknown error")]
     Unknown,
 }
 
-/// 常用的 `Result` 别名，方便在库内统一返回类型。
+/// Common `Result` alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, ApiError>;
 
 impl ApiError {
-    /// 创建一个 `Http` 变体的快捷方法
+    /// Convenience constructor for the `Http` variant.
     pub fn http_error(status: reqwest::StatusCode, text: impl Into<String>) -> Self {
         ApiError::Http {
             status,

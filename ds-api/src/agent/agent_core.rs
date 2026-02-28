@@ -6,7 +6,9 @@ use crate::raw::request::message::{Message, Role};
 use crate::tool_trait::Tool;
 use serde_json::Value;
 
-/// 工具调用事件（结果）
+/// Tool call event (result).
+///
+/// Represents a single tool invocation result produced by the agent.
 #[derive(Debug, Clone)]
 pub struct ToolCallEvent {
     pub id: String,
@@ -15,16 +17,20 @@ pub struct ToolCallEvent {
     pub result: Value,
 }
 
-/// Agent 对外的单次响应：可能包含 assistant 的文本内容或工具调用事件
+/// Single agent response exposed to callers.
+///
+/// May contain assistant text content or a list of tool call events.
 #[derive(Debug, Clone)]
 pub struct AgentResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCallEvent>,
 }
 
-/// DeepseekAgent：封装一个会话（Conversation）和工具集合，负责协调 API 调用与工具执行。
+/// DeepseekAgent: encapsulates a conversation (`Conversation`) and a collection of tools.
 ///
-/// 字段使用 `pub(crate)` 可见性，以便同一模块下的 `stream` 子模块能够访问内部状态（如 `tools`、`tool_index` 等）。
+/// Responsible for coordinating API calls and executing tools as requested by the model.
+/// Fields use `pub(crate)` visibility so the sibling `stream` submodule can access internal
+/// state (for example `tools` and `tool_index`).
 pub struct DeepseekAgent {
     pub(crate) client: ApiClient,
     pub(crate) conversation: DeepseekConversation,
@@ -33,7 +39,9 @@ pub struct DeepseekAgent {
 }
 
 impl DeepseekAgent {
-    /// 使用 token 创建 Agent（内部创建 ApiClient 并传入 Conversation）
+    /// Create an Agent using the provided token.
+    ///
+    /// This internally constructs an `ApiClient` and attaches a `DeepseekConversation`.
     pub fn new(token: impl Into<String>) -> Self {
         let client = ApiClient::new(token.into());
         let conversation = DeepseekConversation::new(client.clone());
@@ -45,30 +53,36 @@ impl DeepseekAgent {
         }
     }
 
-    /// 添加工具（支持链式调用）
+    /// Add a tool (supports method chaining).
+    ///
+    /// Registers the tool and indexes its raw (protocol) function names so incoming
+    /// tool call requests can be routed to the correct implementation.
     pub fn add_tool<TT: Tool + 'static>(mut self, tool: TT) -> Self {
         let idx = self.tools.len();
         for raw in tool.raw_tools() {
-            // raw.function.name 为工具在协议层的名称，用于匹配工具调用请求
+            // raw.function.name is the protocol-level name used to match tool call requests
             self.tool_index.insert(raw.function.name.clone(), idx);
         }
         self.tools.push(Box::new(tool));
         self
     }
 
-    /// 向会话添加用户消息并返回一个 stream（AgentStream）来驱动对话请求与工具执行
+    /// Push a user message into the conversation and return an `AgentStream`.
     ///
-    /// 这里返回类型写为完全路径，依赖于同模块下的 `stream` 子模块提供 `AgentStream`。
+    /// The returned `AgentStream` drives the API request and any subsequent tool execution.
+    /// The return type uses a fully-qualified path and depends on the sibling `stream`
+    /// submodule providing `AgentStream`.
     pub fn chat(mut self, user_message: &str) -> crate::agent::stream::AgentStream {
         self.conversation.push_user_input(user_message.to_string());
         crate::agent::stream::AgentStream::new(self)
     }
 
-    /// 设置自定义 system prompt（以便在会话开始时注入系统提示）
-    /// 这是链式 builder 风格，返回 self 以便继续链式调用。
+    /// Set a custom system prompt to inject at the start of the conversation.
+    ///
+    /// Builder-style: returns `self` so the call can be chained.
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         let p = prompt.into();
-        // 添加一条 system message 到 conversation history
+        // Add a system message to the conversation history
         self.conversation
             .add_message(Message::new(Role::System, p.as_str()));
         self

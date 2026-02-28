@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::raw::request::message::{Role, ToolType};
 
-// Delta 与 Message 类似，但 tool_calls 是增量形式（带 index）
+// Delta is similar to Message, but `tool_calls` are incremental (include an index)
 #[derive(Debug, Deserialize)]
 pub struct Delta {
     #[serde(default)]

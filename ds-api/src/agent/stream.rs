@@ -8,18 +8,18 @@ use crate::agent::agent_core::{AgentResponse, DeepseekAgent, ToolCallEvent};
 use crate::conversation::Conversation;
 use crate::raw::request::message::{Message, Role, ToolCall};
 
-/// API 调用结果（内部）
+/// API call result (internal)
 struct FetchResult {
     content: Option<String>,
     raw_tool_calls: Vec<ToolCall>,
 }
 
-// 工具执行结果（内部）
+// Tools execution result (internal)
 struct ToolsResult {
     events: Vec<ToolCallEvent>,
 }
 
-/// AgentStream: 异步驱动器，按阶段（fetch -> yield content -> execute tools -> yield tool events）推进
+/// AgentStream: async driver that advances in phases (fetch -> yield content -> execute tools -> yield tool events)
 pub struct AgentStream {
     agent: Option<DeepseekAgent>,
     state: AgentStreamState,
@@ -27,11 +27,11 @@ pub struct AgentStream {
 
 enum AgentStreamState {
     Idle,
-    // 正在等 API 响应
+    // Waiting for API response
     FetchingResponse(
         Pin<Box<dyn std::future::Future<Output = (Option<FetchResult>, DeepseekAgent)> + Send>>,
     ),
-    // content 已 yield，正在执行 tools
+    // Content has been yielded; executing tools
     ExecutingTools(Pin<Box<dyn std::future::Future<Output = (ToolsResult, DeepseekAgent)> + Send>>),
     Done,
 }
@@ -71,7 +71,7 @@ impl Stream for AgentStream {
                         }
                         Poll::Ready((Some(fetch), agent)) => {
                             if fetch.raw_tool_calls.is_empty() {
-                                // 没有 tool calls，结束并返回内容
+                                // No tool calls: finish and return content
                                 this.agent = Some(agent);
                                 this.state = AgentStreamState::Done;
                                 return Poll::Ready(Some(AgentResponse {
@@ -79,9 +79,9 @@ impl Stream for AgentStream {
                                     tool_calls: vec![],
                                 }));
                             } else {
-                                // 有 tool calls：
-                                // 我们希望第一次 yield 返回 content + tool call 请求（preview），
-                                // 第二次 yield 返回工具的执行结果。
+                                // There are tool calls:
+                                // We want the first yield to return content + tool call requests (preview),
+                                // and the second yield to return the tool execution results.
                                 let content = fetch.content.clone();
 
                                 // fetch.raw_tool_calls is owned here; take it for preview and clone for execution
@@ -118,7 +118,7 @@ impl Stream for AgentStream {
                         Poll::Pending => return Poll::Pending,
                         Poll::Ready((results, agent)) => {
                             this.agent = Some(agent);
-                            // tool 执行完，yield results，然后回到 Idle 继续下一轮
+                            // Tools finished executing: yield results, then return to Idle for the next round
                             this.state = AgentStreamState::Idle;
                             return Poll::Ready(Some(AgentResponse {
                                 content: None,
@@ -132,13 +132,13 @@ impl Stream for AgentStream {
     }
 }
 
-/// 从 agent 发起 API 请求并返回 FetchResult（包含 assistant 文本和潜在的 raw tool calls）。
+/// Send an API request from the agent and return FetchResult (contains assistant text and potential raw tool calls).
 async fn fetch_response(mut agent: DeepseekAgent) -> (Option<FetchResult>, DeepseekAgent) {
-    // 使用会话中的历史构建请求
+    // Build the request using the conversation history
     let history = agent.conversation.history().clone();
     let mut req = crate::api::ApiRequest::builder().messages(history);
 
-    // 将工具（raw definitions）附加到请求
+    // Attach tools (raw definitions) to the request
     for tool in &agent.tools {
         for raw in tool.raw_tools() {
             req = req.add_tool(raw);
@@ -149,7 +149,7 @@ async fn fetch_response(mut agent: DeepseekAgent) -> (Option<FetchResult>, Deeps
         req = req.tool_choice_auto();
     }
 
-    // 使用 agent 自己持有的 ApiClient 发送请求
+    // Send the request using the ApiClient owned by the agent
     let resp = match agent.client.send(req).await {
         Ok(r) => r,
         Err(_) => return (None, agent),
@@ -164,7 +164,7 @@ async fn fetch_response(mut agent: DeepseekAgent) -> (Option<FetchResult>, Deeps
     let content = assistant_msg.content.clone();
     let raw_tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
 
-    // assistant 消息加入会话历史
+    // Add the assistant message into the conversation history
     agent.conversation.history_mut().push(assistant_msg);
 
     (
@@ -176,7 +176,7 @@ async fn fetch_response(mut agent: DeepseekAgent) -> (Option<FetchResult>, Deeps
     )
 }
 
-/// 执行工具调用并将工具结果写回会话历史，返回事件列表
+/// Execute tool calls, write tool results back into the conversation history, and return a list of events
 async fn execute_tools(
     mut agent: DeepseekAgent,
     raw_tool_calls: Vec<ToolCall>,
@@ -191,7 +191,7 @@ async fn execute_tools(
             None => serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) }),
         };
 
-        // 将 tool 返回的结果以工具角色消息加入会话历史（便于后续对话）
+        // Push the tool's returned result as a tool-role message into the conversation history (to aid subsequent dialog)
         agent.conversation.history_mut().push(Message {
             role: Role::Tool,
             content: Some(result.to_string()),

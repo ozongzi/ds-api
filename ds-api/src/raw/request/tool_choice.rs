@@ -9,10 +9,10 @@ pub enum ToolChoice {
 
     /// type string REQUIRED
     ///     Possible values: `function`
-    ///     tool 的类型。目前，仅支持 function。
+    ///     The tool type. Currently only `function` is supported.
     /// function object REQUIRED
     ///     name string REQUIRED
-    ///     要调用的函数名称。
+    ///     The name of the function to invoke.
     Object(ToolChoiceObject),
 }
 
