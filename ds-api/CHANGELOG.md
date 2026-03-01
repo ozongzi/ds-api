@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-03-01
+
+### Summary
+This is a patch release that improves the token estimation heuristic, updates documentation and examples, and bumps the crate version to `0.3.2`.
+
+### Changes
+- Bumped crate version to `0.3.2`.
+- Improved token estimation:
+  - Adjusted the chars-to-token heuristic to better handle multibyte characters and edge cases.
+  - Fixed an off-by-one rounding issue in the estimator.
+- Documentation updates:
+  - Updated README and release notes to mention the token estimator improvement and version bump.
+  - Ensured examples reference the correct behavior and version.
+- Packaging:
+  - `ds-api/Cargo.toml` version updated to `0.3.2`.
+
+### Notes
+- This release contains no public API changes; it is safe for downstream users (semver patch).
+- Recommended checks before publishing:
+  - `cargo test --manifest-path ds-api/Cargo.toml`
+  - `cargo clippy -p ds-api -- -D warnings`
+  - `cargo package --manifest-path ds-api/Cargo.toml`
+
+
 ## [0.3.0] - 2026-02-28
 
 ### Summary

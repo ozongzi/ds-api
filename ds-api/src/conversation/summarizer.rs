@@ -33,7 +33,7 @@ pub struct TokenBasedSummarizer {
 impl Default for TokenBasedSummarizer {
     fn default() -> Self {
         Self {
-            threshold: 100_000,
+            threshold: 80_000,
             retain_last: 10,
             max_summary_chars: 2_000, // cap the summary length
         }
@@ -49,7 +49,11 @@ impl TokenBasedSummarizer {
             .iter()
             .filter(|m| !matches!(m.role, Role::System))
             .filter_map(|m| m.content.as_ref())
-            .map(|s| s.len())
+            .map(|s| {
+                s.chars()
+                    .map(|c| if c.is_ascii() { 1 } else { 4 })
+                    .sum::<usize>()
+            })
             .sum::<usize>()
             / 4
     }
