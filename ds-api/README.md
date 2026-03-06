@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ApiClient::new(token);
 
     let req = ApiRequest::deepseek_chat(vec![
-        Message::new(ds_api::raw::request::message::Role::User, "Hello from Rust"),
+        Message::user("Hello from Rust"),
     ])
     .max_tokens(150)
     .json();

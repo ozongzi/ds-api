@@ -53,6 +53,10 @@ impl Message {
     pub fn assistant(message: &str) -> Self {
         Self::new(Role::Assistant, message)
     }
+
+    pub fn system(message: &str) -> Self {
+        Self::new(Role::System, message)
+    }
 }
 
 // Role enum (includes Tool variant)
