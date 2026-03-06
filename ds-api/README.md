@@ -252,12 +252,3 @@ cargo clippy -p ds-api -- -D warnings
 
 ## License
 Check `Cargo.toml` for license information.
-
----
-
-If you want, I can:
-- Produce a dedicated `UPGRADING.md` with automated migration diffs.
-- Replace the example files in `examples/` with simpler, up-to-date usage snippets.
-- Add a short changelog entry under `docs/` describing the refactor and linking to migration tips.
-
-Which would you prefer next?

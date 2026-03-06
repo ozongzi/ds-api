@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::api::ApiClient;
-use crate::conversation::{Conversation, DeepseekConversation};
+use crate::conversation::{Conversation, DeepseekConversation, Summarizer};
 use crate::raw::request::message::{Message, Role};
 use crate::tool_trait::Tool;
 use serde_json::Value;
@@ -85,6 +85,14 @@ impl DeepseekAgent {
         // Add a system message to the conversation history
         self.conversation
             .add_message(Message::new(Role::System, p.as_str()));
+        self
+    }
+
+    /// Set a summarizer to use for conversation summarization.
+    ///
+    /// Builder-style: returns `self` so the call can be chained.
+    pub fn with_summarizer(mut self, summarizer: impl Summarizer + 'static) -> Self {
+        self.conversation = self.conversation.with_summarizer(summarizer);
         self
     }
 }
