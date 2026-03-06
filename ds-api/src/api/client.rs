@@ -23,13 +23,18 @@ impl ApiClient {
     /// Create a new client with the given token.
     #[instrument(level = "info", skip(token), fields(masked_token = tracing::field::Empty))]
     pub fn new(token: impl Into<String>) -> Self {
+        Self::with_client(token, Client::new())
+    }
+
+    #[instrument(level = "info", skip(token), fields(masked_token = tracing::field::Empty))]
+    pub fn with_client(token: impl Into<String>, client: Client) -> Self {
         // avoid recording the raw token value in traces; we mark a field instead
         let token_str = token.into();
         info!(message = "creating ApiClient instance");
         let client = Self {
             token: token_str.clone(),
             base_url: "https://api.deepseek.com".to_string(),
-            client: Client::new(),
+            client,
             timeout: None,
         };
         // annotate the trace/span with a masked token indicator (presence only)
