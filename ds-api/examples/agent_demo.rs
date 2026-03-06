@@ -31,24 +31,66 @@ async fn main() {
     // Ensure DEEPSEEK_API_KEY is set in your environment before running this example.
     let token = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set");
 
-    let agent = DeepseekAgent::new(token)
-        .add_tool(WeatherTool {
-            client: Client::new(),
-        })
+    // ── Non-streaming (default) ───────────────────────────────────────────────
+    // The agent waits for the full response before yielding it.
+    println!("=== Non-streaming ===");
+
+    let agent = DeepseekAgent::new(&token)
+        .add_tool(WeatherTool { client: Client::new() })
         .with_system_prompt("You are a helpful assistant.");
 
-    // Ask the agent to check weather for two cities.
     let mut stream = agent.chat("Check the weather for Beijing and Shanghai");
 
-    while let Some(response) = stream.next().await {
-        if let Some(content) = &response.content {
-            println!("Assistant: {}", content);
-        }
-        for tc in &response.tool_calls {
-            println!("Tool call {}({})", tc.name, tc.args);
-            if tc.result != Value::Null {
-                println!("-> {}", tc.result);
+    while let Some(event) = stream.next().await {
+        match event {
+            Err(e) => { eprintln!("Error: {e}"); break; }
+            Ok(response) => {
+                if let Some(content) = &response.content {
+                    println!("Assistant: {}", content);
+                }
+                for tc in &response.tool_calls {
+                    println!("Tool call {}({})", tc.name, tc.args);
+                    if tc.result != Value::Null {
+                        println!("-> {}", tc.result);
+                    }
+                }
             }
         }
     }
+
+    // ── Streaming ────────────────────────────────────────────────────────────
+    // With `.with_streaming()` the agent uses SSE internally.
+    // Text fragments are yielded one by one as they arrive; tool call results
+    // still arrive as a discrete event after execution completes.
+    println!("\n=== Streaming ===");
+
+    let agent = DeepseekAgent::new(&token)
+        .with_streaming()
+        .add_tool(WeatherTool { client: Client::new() })
+        .with_system_prompt("You are a helpful assistant.");
+
+    let mut stream = agent.chat("Check the weather for Beijing and Shanghai");
+
+    while let Some(event) = stream.next().await {
+        match event {
+            Err(e) => { eprintln!("Error: {e}"); break; }
+            Ok(response) => {
+                if let Some(fragment) = &response.content {
+                    // In streaming mode each AgentResponse with content is a single
+                    // text fragment — print without a newline to show them inline.
+                    print!("{}", fragment);
+                }
+                for tc in &response.tool_calls {
+                    if tc.result == Value::Null {
+                        // Preview event: the model requested this tool call.
+                        println!("\n[calling {}({})]", tc.name, tc.args);
+                    } else {
+                        // Result event: the tool finished executing.
+                        println!("[result] {}", tc.result);
+                    }
+                }
+            }
+        }
+    }
+    println!(); // final newline after streamed text
 }

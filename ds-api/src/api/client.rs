@@ -162,6 +162,67 @@ impl ApiClient {
         Ok(chunk_stream.boxed())
     }
 
+    /// Send a streaming request consuming `self`, returning a `'static` `BoxStream`.
+    ///
+    /// Unlike `send_stream`, this takes ownership so the returned stream is not tied
+    /// to a client lifetime — useful when the stream must outlive the client reference
+    /// (e.g. storing it inside a state machine).
+    #[instrument(level = "info", skip(self, req))]
+    pub async fn into_stream(
+        self,
+        req: ApiRequest,
+    ) -> Result<BoxStream<'static, std::result::Result<ChatCompletionChunk, ApiError>>> {
+        let mut raw = req.into_raw();
+        raw.stream = Some(true);
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        debug!(method = "POST", %url, "sending streaming request (owned)");
+
+        let response = match self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&raw)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "stream http send failed");
+                return Err(ApiError::Reqwest(e));
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_else(|e| e.to_string());
+            warn!(%status, "non-success response for stream (owned)");
+            return Err(ApiError::http_error(status, text));
+        }
+
+        let event_stream = response.bytes_stream().eventsource();
+        info!("stream connected (owned); converting SSE to chunk stream");
+
+        let chunk_stream = event_stream.filter_map(|ev_res| async move {
+            match ev_res {
+                Ok(ev) => {
+                    if ev.data == "[DONE]" {
+                        debug!("received [DONE] event");
+                        None
+                    } else {
+                        match serde_json::from_str::<ChatCompletionChunk>(&ev.data) {
+                            Ok(chunk) => Some(Ok(chunk)),
+                            Err(e) => Some(Err(ApiError::Json(e))),
+                        }
+                    }
+                }
+                Err(e) => Some(Err(ApiError::EventSource(e.to_string()))),
+            }
+        });
+
+        Ok(chunk_stream.boxed())
+    }
+
     /// Convenience: stream only text fragments (delta.content) as String items.
     ///
     /// Each yielded item is `Result<String, ApiError>`.

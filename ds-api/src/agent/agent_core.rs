@@ -36,6 +36,9 @@ pub struct DeepseekAgent {
     pub(crate) conversation: DeepseekConversation,
     pub(crate) tools: Vec<Box<dyn Tool>>,
     pub(crate) tool_index: HashMap<String, usize>,
+    /// If true, the agent uses streaming for each API turn and yields text fragments
+    /// one by one as they arrive.  If false (default), it waits for the full response.
+    pub(crate) streaming: bool,
 }
 
 impl DeepseekAgent {
@@ -50,6 +53,7 @@ impl DeepseekAgent {
             conversation,
             tools: vec![],
             tool_index: HashMap::new(),
+            streaming: false,
         }
     }
 
@@ -75,6 +79,15 @@ impl DeepseekAgent {
     pub fn chat(mut self, user_message: &str) -> crate::agent::stream::AgentStream {
         self.conversation.push_user_input(user_message.to_string());
         crate::agent::stream::AgentStream::new(self)
+    }
+
+    /// Enable streaming text output for each API turn.
+    ///
+    /// When set, the agent uses `send_stream` internally so text fragments are
+    /// yielded to the caller as they arrive instead of waiting for a full response.
+    pub fn with_streaming(mut self) -> Self {
+        self.streaming = true;
+        self
     }
 
     /// Set a custom system prompt to inject at the start of the conversation.

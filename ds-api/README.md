@@ -50,14 +50,33 @@ async fn main() {
     let token = std::env::var("DEEPSEEK_API_KEY").unwrap();
     let agent = DeepseekAgent::new(token).add_tool(EchoTool);
 
+    // AgentStream yields Result<AgentResponse, ApiError>
     let mut s = agent.chat("Please echo: hello");
-    while let Some(ev) = s.next().await {
-        if let Some(content) = &ev.content {
-            println!("Assistant: {}", content);
+    while let Some(event) = s.next().await {
+        match event {
+            Err(e) => { eprintln!("Error: {e}"); break; }
+            Ok(ev) => {
+                if let Some(content) = &ev.content {
+                    println!("Assistant: {}", content);
+                }
+                for tc in &ev.tool_calls {
+                    println!("Tool call: {} -> {}", tc.name, tc.result);
+                }
+            }
         }
-        for tc in &ev.tool_calls {
-            println!("Tool call: {} -> {}", tc.name, tc.result);
-        }
+    }
+}
+```
+
+Example: streaming text with `.with_streaming()`
+```rust
+// Add .with_streaming() to receive text fragments as they arrive.
+let agent = DeepseekAgent::new(token).with_streaming().add_tool(EchoTool);
+let mut s = agent.chat("Please echo: hello");
+while let Some(event) = s.next().await {
+    match event {
+        Err(e) => { eprintln!("Error: {e}"); break; }
+        Ok(ev) => { if let Some(fragment) = &ev.content { print!("{}", fragment); } }
     }
 }
 ```
@@ -75,7 +94,7 @@ This README documents the new API, breaking changes, migration steps, and exampl
 - ApiRequest — chainable, safe builder. Use `ApiRequest::builder()` or `ApiRequest::deepseek_chat(...)` / `ApiRequest::deepseek_reasoner(...)` to choose a model (Model enum is intentionally not exported).
 - ApiClient — owns token/base_url/reqwest::Client; send blocking or streaming requests.
 - DeepseekConversation — manages history and auto-summary via the `Summarizer` trait. Default summarizer is `TokenBasedSummarizer`.
-- DeepseekAgent — high-level agent that combines a conversation, tools (via `tool` macro), and auto summary. Agent yields two-step events for tool calls: first a preview (content + tool call requests) then tool results.
+- DeepseekAgent — high-level agent that combines a conversation, tools (via `tool` macro), and auto summary. `chat(...)` returns `AgentStream` which yields `Result<AgentResponse, ApiError>`. Tool calls produce two events: a preview (result = `null`) then execution results. Use `.with_streaming()` to receive text fragments as they arrive.
 - raw module still available under `ds_api::raw` for advanced users, but not part of the primary recommended API.
 
 ## Breaking changes (important)
@@ -194,11 +213,16 @@ async fn main() {
 
     let mut s = agent.chat("What's the weather in Beijing and Shanghai?");
     while let Some(event) = s.next().await {
-        if let Some(content) = &event.content {
-            println!("Assistant: {}", content);
-        }
-        for tc in &event.tool_calls {
-            println!("Tool call preview/result: {} {} -> {}", tc.name, tc.args, tc.result);
+        match event {
+            Err(e) => { eprintln!("Error: {e}"); break; }
+            Ok(ev) => {
+                if let Some(content) = &ev.content {
+                    println!("Assistant: {}", content);
+                }
+                for tc in &ev.tool_calls {
+                    println!("Tool call preview/result: {} {} -> {}", tc.name, tc.args, tc.result);
+                }
+            }
         }
     }
 }

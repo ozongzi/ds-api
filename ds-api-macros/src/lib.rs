@@ -43,30 +43,81 @@ fn parse_doc(lines: &[String]) -> (String, std::collections::HashMap<String, Str
     (desc_lines.join(" ").trim().to_string(), params)
 }
 
+/// Recursively map a `syn::Type` to a JSON Schema snippet.
+///
+/// Matches on the *structure* of the type rather than its string representation,
+/// so path aliases (`std::string::String`), references (`&str`), and generic
+/// wrappers (`Option<T>`, `Vec<T>`) all resolve correctly.
 fn type_to_json_schema(ty: &Type) -> TokenStream2 {
-    let type_str = quote!(#ty).to_string().replace(" ", "");
-    match type_str.as_str() {
-        "String" | "&str" => quote!(serde_json::json!({"type": "string"})),
-        "bool" => quote!(serde_json::json!({"type": "boolean"})),
-        "f32" | "f64" => quote!(serde_json::json!({"type": "number"})),
-        s if s.starts_with("Option<") => {
-            let inner = &type_str[7..type_str.len() - 1];
-            match inner {
-                "String" | "&str" => quote!(serde_json::json!({"type": "string"})),
+    match ty {
+        // &str, &String, &T — strip the reference and recurse
+        Type::Reference(r) => type_to_json_schema(&r.elem),
+
+        Type::Path(tp) => {
+            // Only look at the final path segment so that
+            // `std::string::String` and `String` both work.
+            let seg = match tp.path.segments.last() {
+                Some(s) => s,
+                None => return unsupported(ty),
+            };
+
+            match seg.ident.to_string().as_str() {
+                "String" | "str" => quote!(serde_json::json!({"type": "string"})),
                 "bool" => quote!(serde_json::json!({"type": "boolean"})),
                 "f32" | "f64" => quote!(serde_json::json!({"type": "number"})),
-                _ => quote!(serde_json::json!({"type": "integer"})),
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => {
+                    quote!(serde_json::json!({"type": "integer"}))
+                }
+                // Option<T> — recurse into T
+                "Option" => match inner_type_arg(seg) {
+                    Some(inner) => type_to_json_schema(inner),
+                    None => unsupported(ty),
+                },
+                // Vec<T> — recurse into T for the items schema
+                "Vec" => match inner_type_arg(seg) {
+                    Some(inner) => {
+                        let items = type_to_json_schema(inner);
+                        quote!(serde_json::json!({"type": "array", "items": #items}))
+                    }
+                    None => unsupported(ty),
+                },
+                _ => unsupported(ty),
             }
         }
-        _ => quote!(serde_json::json!({"type": "integer"})),
+
+        _ => unsupported(ty),
     }
 }
 
+/// Emit a compile-time error pointing at the offending type.
+fn unsupported(ty: &Type) -> TokenStream2 {
+    syn::Error::new_spanned(
+        ty,
+        "unsupported type in #[tool]: use String, bool, f32/f64, \
+         an integer primitive, Vec<T>, or Option<T>",
+    )
+    .to_compile_error()
+}
+
+/// Extract the first generic type argument from a path segment, e.g. the `T`
+/// in `Option<T>` or `Vec<T>`.
+fn inner_type_arg(seg: &syn::PathSegment) -> Option<&Type> {
+    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+        if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
+            return Some(ty);
+        }
+    }
+    None
+}
+
 fn is_option(ty: &Type) -> bool {
-    quote!(#ty)
-        .to_string()
-        .replace(" ", "")
-        .starts_with("Option<")
+    if let Type::Path(tp) = ty {
+        if let Some(seg) = tp.path.segments.last() {
+            return seg.ident == "Option";
+        }
+    }
+    false
 }
 
 struct ToolMethod {
@@ -185,9 +236,14 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
             let pname_str = &p.name;
             let ty = &p.ty;
             quote! {
-                let #pname: #ty = serde_json::from_value(
+                let #pname: #ty = match serde_json::from_value(
                     args.get(#pname_str).cloned().unwrap_or(serde_json::Value::Null)
-                ).expect(concat!("failed to parse param: ", #pname_str));
+                ) {
+                    Ok(v) => v,
+                    Err(e) => return serde_json::json!({
+                        "error": format!("invalid argument '{}': {}", #pname_str, e)
+                    }),
+                };
             }
         });
         quote! {

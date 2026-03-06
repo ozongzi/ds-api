@@ -52,13 +52,18 @@ async fn main() {
     // The agent returns a stream of `AgentResponse` events. When the model triggers tool calls,
     // the stream yields a preview (assistant content + tool call requests) followed by the tool results.
     let mut s = agent.chat("Please echo: hello");
-    while let Some(ev) = s.next().await {
-        if let Some(content) = &ev.content {
-            println!("Assistant: {}", content);
-        }
-        for tc in &ev.tool_calls {
-            // ToolCallEvent fields: id, name, args, result
-            println!("Tool call: {} -> {}", tc.name, tc.result);
+    while let Some(event) = s.next().await {
+        match event {
+            Err(e) => { eprintln!("Error: {e}"); break; }
+            Ok(ev) => {
+                if let Some(content) = &ev.content {
+                    println!("Assistant: {}", content);
+                }
+                for tc in &ev.tool_calls {
+                    // ToolCallEvent fields: id, name, args, result
+                    println!("Tool call: {} -> {}", tc.name, tc.result);
+                }
+            }
         }
     }
 }
@@ -80,6 +85,7 @@ pub mod tool_trait;
 pub use agent::{AgentResponse, DeepseekAgent, ToolCallEvent};
 pub use api::{ApiClient, ApiRequest};
 pub use conversation::DeepseekConversation;
+pub use error::ApiError;
 pub use tool_trait::Tool;
 
 pub use ds_api_macros::tool;

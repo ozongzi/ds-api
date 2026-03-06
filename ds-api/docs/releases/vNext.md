@@ -73,12 +73,24 @@ The goal is to provide a safer, clearer, and more extensible API surface while k
   - Wraps a `DeepseekConversation`, `ApiClient`, and zero or more tools (`Tool` trait).
   - `add_tool(...)` registers tool functions (via `#[tool]` macro).
   - `with_system_prompt(...)` lets you set a system prompt before starting the conversation.
-  - `chat(...)` returns an `AgentStream` (implements `Stream<Item = AgentResponse>`).
+  - `chat(...)` returns an `AgentStream` (implements `Stream<Item = Result<AgentResponse, ApiError>>`).
+  - `.with_streaming()` — enables SSE-based streaming; text fragments are yielded as they arrive.
 
 - `AgentStream` lifecycle (important)
+  - `AgentStream` now yields `Result<AgentResponse, ApiError>` instead of `AgentResponse`. API and network errors are propagated as `Err(e)` items rather than silently terminating the stream.
   - When the assistant response contains tool-call requests, the agent yields:
     1. Assistant content + preview of tool calls (preview result is `null`) — so callers can display the assistant reply and the fact that tools will be invoked.
     2. After the agent runs the tools, the agent yields tool-call events with actual results; these results are appended to the conversation history as `Role::Tool` messages.
+  - `.with_streaming()` — opt-in streaming mode. When enabled the agent uses SSE internally and yields text fragments one by one as they arrive instead of waiting for the full response. Tool call handling is otherwise identical.
+
+- Tool argument error handling
+  - The `#[tool]` macro now generates `match`-based argument parsing. If the model provides an argument with the wrong type or missing required fields, the tool returns `{"error": "invalid argument '...': ..."}` to the conversation history instead of panicking. The model can then see the error and retry with corrected arguments.
+
+- `#[tool]` macro JSON schema generation
+  - Replaced string-based type matching with recursive `syn::Type` structural matching.
+  - `Vec<T>` now correctly generates `{"type": "array", "items": <T schema>}`.
+  - Path-qualified types such as `std::string::String` now resolve to `"string"`.
+  - All integer primitives (`u8`–`u128`, `i8`–`i128`, `usize`, `isize`) are explicitly matched instead of relying on fallthrough.
 
 ---
 
@@ -139,9 +151,26 @@ let agent = DeepseekAgent::new(token)
     .add_tool(MyTool { /* ... */ })
     .with_system_prompt("You are a helpful assistant.");
 let mut stream = agent.chat("What's the weather in Tokyo?");
-while let Some(evt) = stream.next().await {
-    if let Some(content) = evt.content { println!("assistant: {}", content); }
-    for tc in evt.tool_calls { println!("tool: {} -> {}", tc.name, tc.result); }
+while let Some(event) = stream.next().await {
+    match event {
+        Err(e) => { eprintln!("Error: {e}"); break; }
+        Ok(ev) => {
+            if let Some(content) = &ev.content { println!("assistant: {}", content); }
+            for tc in &ev.tool_calls { println!("tool: {} -> {}", tc.name, tc.result); }
+        }
+    }
+}
+```
+
+For streaming text fragments as they arrive:
+```rust
+let agent = DeepseekAgent::new(token).with_streaming().add_tool(MyTool { /* ... */ });
+let mut stream = agent.chat("What's the weather in Tokyo?");
+while let Some(event) = stream.next().await {
+    match event {
+        Err(e) => { eprintln!("Error: {e}"); break; }
+        Ok(ev) => { if let Some(fragment) = &ev.content { print!("{}", fragment); } }
+    }
 }
 ```
 
@@ -190,6 +219,10 @@ cargo run --example agent_demo
   - Introduced `ApiRequest`/`ApiClient`, `DeepseekConversation`, `DeepseekAgent`.
   - Added `Summarizer` trait and `TokenBasedSummarizer` default (skips system prompts).
   - Changed agent's tool-call flow (preview + execution yields).
+  - **Breaking:** `AgentStream::Item` changed from `AgentResponse` to `Result<AgentResponse, ApiError>`.
+  - Added `DeepseekAgent::with_streaming()` for SSE-based text streaming.
+  - `#[tool]` macro: argument parse failures now return an error JSON to the LLM instead of panicking.
+  - `#[tool]` macro: JSON schema generation now uses `syn::Type` structural matching (`Vec<T>`, path-qualified types, all integer primitives handled correctly).
 
 ---
 
