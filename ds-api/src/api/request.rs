@@ -1,10 +1,7 @@
 //! ApiRequest builder module.
 //!
 //! Provides a safe, chainable request builder that wraps the internal
-//! `crate::raw::ChatCompletionRequest`. The builder intentionally avoids
-//! exposing raw configuration enums (like `Model`) to downstream callers.
-//! Use the convenience constructors `deepseek_chat(...)` and
-//! `deepseek_reasoner(...)` to pick a model.
+//! `crate::raw::ChatCompletionRequest`.
 
 use crate::raw::{ChatCompletionRequest, Message, ResponseFormat, ResponseFormatType, Tool};
 
@@ -23,6 +20,11 @@ impl ApiRequest {
         Self {
             raw: ChatCompletionRequest::default(),
         }
+    }
+
+    pub fn model(mut self, model: crate::raw::Model) -> Self {
+        self.raw.model = model;
+        self
     }
 
     /// Convenience constructor: deepseek-chat + messages

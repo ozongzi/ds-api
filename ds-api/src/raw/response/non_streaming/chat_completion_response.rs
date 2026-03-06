@@ -14,3 +14,9 @@ pub struct ChatCompletionResponse {
     pub object: ObjectType,
     pub usage: Usage,
 }
+
+impl ChatCompletionResponse {
+    pub fn content(&self) -> Option<&str> {
+        self.choices.first()?.message.content.as_deref()
+    }
+}
