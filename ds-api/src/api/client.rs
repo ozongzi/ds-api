@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use eventsource_stream::Eventsource;
 use futures::{StreamExt, stream::BoxStream};
-use reqwest::Client;
+use reqwest::{Client, Response};
 
 use tracing::{debug, info, instrument, warn};
 
@@ -28,16 +28,14 @@ impl ApiClient {
 
     #[instrument(level = "info", skip(token), fields(masked_token = tracing::field::Empty))]
     pub fn with_client(token: impl Into<String>, client: Client) -> Self {
-        // avoid recording the raw token value in traces; we mark a field instead
         let token_str = token.into();
         info!(message = "creating ApiClient instance");
         let client = Self {
-            token: token_str.clone(),
+            token: token_str,
             base_url: "https://api.deepseek.com".to_string(),
             client,
             timeout: None,
         };
-        // annotate the trace/span with a masked token indicator (presence only)
         tracing::Span::current().record("masked_token", "***");
         client
     }
@@ -60,29 +58,33 @@ impl ApiClient {
         self
     }
 
-    /// Send a non-streaming request and parse the full ChatCompletionResponse.
-    #[instrument(level = "info", skip(self, req))]
-    pub async fn send(&self, req: ApiRequest) -> Result<ChatCompletionResponse> {
-        let raw = req.into_raw();
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        debug!(method = "POST", %url, "sending non-streaming request");
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    fn completions_url(&self) -> String {
+        format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+    }
+
+    /// Send an HTTP POST to the completions endpoint and return the raw
+    /// [`Response`], checking for non-2xx status codes.
+    async fn post_raw(&self, req: ApiRequest, stream: bool) -> Result<Response> {
+        let mut raw = req.into_raw();
+        if stream {
+            raw.stream = Some(true);
+        }
+
+        let url = self.completions_url();
+        debug!(method = "POST", %url, %stream, "sending request");
 
         let mut builder = self.client.post(&url).bearer_auth(&self.token).json(&raw);
-        if let Some(t) = self.timeout {
+        if !stream && let Some(t) = self.timeout {
             builder = builder.timeout(t);
             debug!(timeout_ms = ?t.as_millis(), "request timeout set");
         }
 
-        let resp = match builder.send().await {
-            Ok(r) => {
-                debug!("received HTTP response");
-                r
-            }
-            Err(e) => {
-                warn!(error = %e, "http send failed");
-                return Err(ApiError::Reqwest(e));
-            }
-        };
+        let resp = builder.send().await.map_err(|e| {
+            warn!(error = %e, "http send failed");
+            ApiError::Reqwest(e)
+        })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -91,144 +93,99 @@ impl ApiClient {
             return Err(ApiError::http_error(status, text));
         }
 
+        Ok(resp)
+    }
+
+    /// Convert a successful streaming [`Response`] into a
+    /// `BoxStream<Result<ChatCompletionChunk, ApiError>>`.
+    ///
+    /// This is the single source of truth for SSE → chunk parsing.
+    fn response_into_chunk_stream(
+        resp: Response,
+    ) -> BoxStream<'static, std::result::Result<ChatCompletionChunk, ApiError>> {
+        let event_stream = resp.bytes_stream().eventsource();
+
+        event_stream
+            .filter_map(|ev_res| async move {
+                match ev_res {
+                    Ok(ev) => {
+                        if ev.data == "[DONE]" {
+                            debug!("received [DONE] event");
+                            None
+                        } else {
+                            match serde_json::from_str::<ChatCompletionChunk>(&ev.data) {
+                                Ok(chunk) => {
+                                    debug!("parsed chunk");
+                                    Some(Ok(chunk))
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "failed to parse chunk");
+                                    Some(Err(ApiError::Json(e)))
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "eventsource error");
+                        Some(Err(ApiError::EventSource(e.to_string())))
+                    }
+                }
+            })
+            .boxed()
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// Send a non-streaming request and parse the full [`ChatCompletionResponse`].
+    #[instrument(level = "info", skip(self, req))]
+    pub async fn send(&self, req: ApiRequest) -> Result<ChatCompletionResponse> {
+        let resp = self.post_raw(req, false).await?;
+        debug!("received HTTP response; deserialising");
+
         let parsed = resp.json::<ChatCompletionResponse>().await.map_err(|e| {
             warn!(error = %e, "failed to parse ChatCompletionResponse");
             ApiError::Reqwest(e)
         })?;
+
         info!("request completed successfully");
         Ok(parsed)
     }
 
-    /// Send a streaming (SSE) request and return a boxed pinned stream of parsed `ChatCompletionChunk`.
+    /// Send a streaming (SSE) request and return a `BoxStream` of parsed
+    /// [`ChatCompletionChunk`]s.
+    ///
+    /// The stream borrows `&self` via the response lifetime, so it cannot
+    /// outlive the client.  Use [`into_stream`][Self::into_stream] when you
+    /// need a `'static` stream (e.g. inside a state machine that owns the
+    /// client).
     #[instrument(level = "info", skip(self, req))]
     pub async fn send_stream(
         &self,
         req: ApiRequest,
     ) -> Result<BoxStream<'_, std::result::Result<ChatCompletionChunk, ApiError>>> {
-        let mut raw = req.into_raw();
-        raw.stream = Some(true);
-
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        debug!(method = "POST", %url, "sending streaming request");
-        let response = match self
-            .client
-            .post(&url)
-            .bearer_auth(&self.token)
-            .json(&raw)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "stream http send failed");
-                return Err(ApiError::Reqwest(e));
-            }
-        };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_else(|e| e.to_string());
-            warn!(%status, "non-success response for stream");
-            return Err(ApiError::http_error(status, text));
-        }
-
-        // Convert to SSE event stream
-        let event_stream = response.bytes_stream().eventsource();
-        info!("stream connected; converting SSE to chunk stream");
-
-        // Map SSE events -> parsed ChatCompletionChunk or ApiError
-        let chunk_stream = event_stream.filter_map(|ev_res| async move {
-            match ev_res {
-                Ok(ev) => {
-                    if ev.data == "[DONE]" {
-                        debug!("received [DONE] event");
-                        None
-                    } else {
-                        match serde_json::from_str::<ChatCompletionChunk>(&ev.data) {
-                            Ok(chunk) => {
-                                debug!("parsed chunk");
-                                Some(Ok(chunk))
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "failed to parse chunk");
-                                Some(Err(ApiError::Json(e)))
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "eventsource error");
-                    Some(Err(ApiError::EventSource(e.to_string())))
-                }
-            }
-        });
-
-        // Box the stream into a pinned BoxStream for ergonomic returns.
-        Ok(chunk_stream.boxed())
+        let resp = self.post_raw(req, true).await?;
+        info!("stream connected");
+        Ok(Self::response_into_chunk_stream(resp))
     }
 
-    /// Send a streaming request consuming `self`, returning a `'static` `BoxStream`.
+    /// Send a streaming (SSE) request, consuming `self`, and return a
+    /// `'static` `BoxStream` of parsed [`ChatCompletionChunk`]s.
     ///
-    /// Unlike `send_stream`, this takes ownership so the returned stream is not tied
-    /// to a client lifetime — useful when the stream must outlive the client reference
-    /// (e.g. storing it inside a state machine).
+    /// Taking ownership of the client means the returned stream is not tied to
+    /// any borrow, making it suitable for storage inside a state machine (e.g.
+    /// [`AgentStream`][crate::agent::AgentStream]).
     #[instrument(level = "info", skip(self, req))]
     pub async fn into_stream(
         self,
         req: ApiRequest,
     ) -> Result<BoxStream<'static, std::result::Result<ChatCompletionChunk, ApiError>>> {
-        let mut raw = req.into_raw();
-        raw.stream = Some(true);
-
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        debug!(method = "POST", %url, "sending streaming request (owned)");
-
-        let response = match self
-            .client
-            .post(&url)
-            .bearer_auth(&self.token)
-            .json(&raw)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "stream http send failed");
-                return Err(ApiError::Reqwest(e));
-            }
-        };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_else(|e| e.to_string());
-            warn!(%status, "non-success response for stream (owned)");
-            return Err(ApiError::http_error(status, text));
-        }
-
-        let event_stream = response.bytes_stream().eventsource();
-        info!("stream connected (owned); converting SSE to chunk stream");
-
-        let chunk_stream = event_stream.filter_map(|ev_res| async move {
-            match ev_res {
-                Ok(ev) => {
-                    if ev.data == "[DONE]" {
-                        debug!("received [DONE] event");
-                        None
-                    } else {
-                        match serde_json::from_str::<ChatCompletionChunk>(&ev.data) {
-                            Ok(chunk) => Some(Ok(chunk)),
-                            Err(e) => Some(Err(ApiError::Json(e))),
-                        }
-                    }
-                }
-                Err(e) => Some(Err(ApiError::EventSource(e.to_string()))),
-            }
-        });
-
-        Ok(chunk_stream.boxed())
+        let resp = self.post_raw(req, true).await?;
+        info!("stream connected (owned)");
+        Ok(Self::response_into_chunk_stream(resp))
     }
 
-    /// Convenience: stream only text fragments (delta.content) as String items.
+    /// Convenience: stream only text fragments (`delta.content`) as [`String`]
+    /// items.
     ///
     /// Each yielded item is `Result<String, ApiError>`.
     #[instrument(level = "debug", skip(self, req))]

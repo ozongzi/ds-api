@@ -138,9 +138,42 @@ impl Conversation {
     /// Stream text fragments (`delta.content`) from the API as a
     /// `BoxStream<Result<String, ApiError>>`.
     ///
-    /// Unlike [`send_once`][Conversation::send_once], this method does **not**
-    /// automatically append the assistant reply or run summarization — the caller
-    /// is responsible for collecting the stream and updating history if needed.
+    /// # ⚠ Caller responsibilities
+    ///
+    /// Unlike [`send_once`][Conversation::send_once], this method is intentionally
+    /// minimal: it does **not** append the assistant reply to history, does **not**
+    /// run summarization, and does **not** set `stream: true` on the request for
+    /// you (the underlying [`ApiClient::stream_text`] handles that).
+    ///
+    /// If you want the conversation to remember this turn you must collect the
+    /// full text and push it yourself:
+    ///
+    /// ```no_run
+    /// use futures::StreamExt;
+    /// use ds_api::{ApiClient, conversation::Conversation};
+    /// use ds_api::raw::request::message::{Message, Role};
+    ///
+    /// # #[tokio::main] async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut conv = Conversation::new(ApiClient::new("sk-..."));
+    /// conv.push_user_input("Tell me a joke.");
+    ///
+    /// let mut text = String::new();
+    /// let mut stream = conv.stream_text().await?;
+    /// while let Some(fragment) = stream.next().await {
+    ///     text.push_str(&fragment?);
+    /// }
+    /// drop(stream); // release the borrow on `conv`
+    ///
+    /// // Manually record the assistant turn so the next call sees it.
+    /// conv.add_message(Message::new(Role::Assistant, &text));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Skipping this step means the assistant's reply is silently absent from
+    /// history on the next turn.  [`send_once`][Conversation::send_once] does
+    /// all of this automatically and should be preferred unless you specifically
+    /// need incremental token delivery.
     pub async fn stream_text(
         &mut self,
     ) -> Result<BoxStream<'_, std::result::Result<String, ApiError>>> {
