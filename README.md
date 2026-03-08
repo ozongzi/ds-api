@@ -1,9 +1,13 @@
-# ds_api
+# ds-api
+
+[![crates.io](https://img.shields.io/crates/v/ds-api.svg)](https://crates.io/crates/ds-api)
+[![docs.rs](https://img.shields.io/docsrs/ds-api)](https://docs.rs/ds-api)
+[![license](https://img.shields.io/crates/l/ds-api.svg)](https://github.com/ozongzi/ds-api/blob/main/LICENSE-MIT)
 
 **Your Rust functions. DeepSeek's brain. Zero glue code.**
 
 ```
-cargo add ds_api
+cargo add ds-api
 ```
 
 ---
