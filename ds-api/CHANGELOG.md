@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-03-09
+
+### Summary
+Internal refactor: business logic extracted from the streaming state machine into a dedicated `executor` module.  No public API changes.
+
+### Changes
+
+**New `agent/executor.rs` module**
+- Extracted all "do actual work" functions out of `stream.rs` into a new `executor.rs`:
+  - `build_request` — assembles an `ApiRequest` from history + tools.
+  - `run_summarize` — runs `maybe_summarize` and transfers agent ownership back.
+  - `fetch_response` — non-streaming API call; appends assistant turn to history.
+  - `connect_stream` — opens an SSE `BoxStream` for the current turn.
+  - `execute_tools` — dispatches all pending tool calls and collects results.
+  - `finalize_stream` — assembles complete `ToolCall` objects from SSE delta buffers and records the assistant turn.
+  - `apply_chunk_delta` — applies one SSE chunk delta to the `StreamingData` accumulator.
+  - `raw_to_tool_call_info` — converts a wire `ToolCall` to the public `ToolCallInfo` type.
+- Internal accumulator types (`FetchResult`, `ToolsResult`, `PartialToolCall`, `StreamingData`) and future type aliases (`FetchFuture`, `ConnectFuture`, `ExecFuture`, `SummarizeFuture`) moved to `executor.rs`.
+- `stream.rs` now contains only the `AgentStream` state machine and its `Stream` impl — no business logic, no `async fn`s.
+- This separation makes it straightforward to add retries, timeouts, or parallel tool execution in the future without touching the state machine.
+
+**`SlidingWindowSummarizer` improvements**
+- Added `trigger_at(n: usize)` builder method: set the non-system message count above which summarization is triggered, independently of the `window` (retain count).  Useful when you want the window to only slide after a burst of messages rather than on every new message.
+- `trigger_at` is silently clamped to `window + 1` if a value ≤ `window` is provided.
+- Default behaviour is unchanged: triggers as soon as the non-system count exceeds `window`.
+
+**Documentation**
+- `AgentStream` now has a full doc comment with an example showing streaming event handling.
+- `Summarizer` trait doc includes a complete custom-summarizer example (`TurnLimitSummarizer`).
+- `AgentStreamState` variants have inline doc comments explaining each state's role.
+- `executor.rs` functions all have doc comments explaining inputs, outputs, and side-effects.
+
+### Notes
+- All 36 existing tests (15 unit, 10 integration, 11 doctest) continue to pass.
+- No breaking changes — `0.5.0` consumers require no code changes.
+
+---
+
 ## [0.5.0] - 2026-03-08
 
 ### Summary

@@ -35,6 +35,42 @@ use crate::raw::request::message::{Message, Role};
 ///
 /// The trait is object-safe via `BoxFuture`; you can store it as
 /// `Box<dyn Summarizer>` without `async_trait`.
+///
+/// # Implementing a custom summarizer
+///
+/// ```no_run
+/// use std::pin::Pin;
+/// use ds_api::conversation::Summarizer;
+/// use ds_api::error::ApiError;
+/// use ds_api::raw::request::message::Message;
+///
+/// /// Drops all history older than `max_turns` turns.  No API call needed.
+/// struct TurnLimitSummarizer { max_turns: usize }
+///
+/// impl Summarizer for TurnLimitSummarizer {
+///     fn should_summarize(&self, history: &[Message]) -> bool {
+///         history.len() > self.max_turns
+///     }
+///
+///     fn summarize<'a>(
+///         &'a self,
+///         history: &'a mut Vec<Message>,
+///     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), ApiError>> + Send + 'a>> {
+///         Box::pin(async move {
+///             if history.len() > self.max_turns {
+///                 let drop_count = history.len() - self.max_turns;
+///                 history.drain(0..drop_count);
+///             }
+///             Ok(())
+///         })
+///     }
+/// }
+///
+/// // Use it with an agent:
+/// use ds_api::DeepseekAgent;
+/// let agent = DeepseekAgent::new("sk-...")
+///     .with_summarizer(TurnLimitSummarizer { max_turns: 20 });
+/// ```
 pub trait Summarizer: Send + Sync {
     /// Return `true` if the history should be summarized before the next API turn.
     ///
@@ -274,22 +310,54 @@ impl Summarizer for LlmSummarizer {
 /// # Example
 ///
 /// ```no_run
-/// use ds_api::{DeepseekAgent};
+/// use ds_api::DeepseekAgent;
 /// use ds_api::conversation::SlidingWindowSummarizer;
 ///
+/// // Keep the last 20 non-system messages; trigger summarization above 30.
 /// let agent = DeepseekAgent::new("sk-...")
-///     .with_summarizer(SlidingWindowSummarizer::new(20));
+///     .with_summarizer(
+///         SlidingWindowSummarizer::new(20)
+///             .trigger_at(30)
+///     );
 /// ```
 #[derive(Debug, Clone)]
 pub struct SlidingWindowSummarizer {
-    /// Maximum number of non-system messages to retain.
+    /// Maximum number of non-system messages to retain after summarization.
     pub(crate) window: usize,
+    /// Number of non-system messages above which summarization is triggered.
+    /// Defaults to `window + 1` (trigger as soon as the window is exceeded by one).
+    pub(crate) trigger_at: Option<usize>,
 }
 
 impl SlidingWindowSummarizer {
-    /// Create a summarizer that keeps at most `window` non-system messages.
+    /// Create a summarizer that retains at most `window` non-system messages.
+    ///
+    /// Summarization triggers as soon as the non-system message count exceeds
+    /// `window`.  Use [`trigger_at`][Self::trigger_at] to set a larger trigger
+    /// threshold so the window only slides after a certain amount of growth.
     pub fn new(window: usize) -> Self {
-        Self { window }
+        Self {
+            window,
+            trigger_at: None,
+        }
+    }
+
+    /// Builder: set the non-system message count that triggers summarization.
+    ///
+    /// Must be greater than `window`; if set to a value ≤ `window` it is
+    /// silently clamped to `window + 1`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ds_api::conversation::SlidingWindowSummarizer;
+    ///
+    /// // Retain 20 turns but only start trimming after reaching 40.
+    /// let s = SlidingWindowSummarizer::new(20).trigger_at(40);
+    /// ```
+    pub fn trigger_at(mut self, n: usize) -> Self {
+        self.trigger_at = Some(n.max(self.window + 1));
+        self
     }
 }
 
@@ -299,7 +367,8 @@ impl Summarizer for SlidingWindowSummarizer {
             .iter()
             .filter(|m| !matches!(m.role, Role::System))
             .count();
-        non_system > self.window
+        let threshold = self.trigger_at.unwrap_or(self.window + 1);
+        non_system >= threshold
     }
 
     fn summarize<'a>(

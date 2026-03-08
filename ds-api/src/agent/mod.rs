@@ -1,20 +1,22 @@
 /*!
-Agent module (refactored)
+Agent module
 
-This module splits the previous single-file `agent` implementation into two focused
-submodules:
+This module is split into focused submodules:
 
-- `agent_core` — the core agent struct, public response/event types and tool
+- `agent_core` — the public agent struct, event/response types and tool
   registration logic.
-- `stream` — the asynchronous `AgentStream` state machine that drives API calls
-  and tool execution.
+- `executor` — pure business-logic functions: building requests, fetching
+  responses, opening SSE streams, executing tools.  No `Poll` or `Context`
+  here — just `async fn`s that do real work.
+- `stream` — the asynchronous `AgentStream` state machine that schedules
+  calls into `executor` and drives the full agent loop.
 
-We re-export the primary public types here so the crate-level API remains stable:
-callers can continue to use `ds_api::DeepseekAgent`, `ds_api::AgentResponse`,
-and `ds_api::ToolCallEvent`.
+Public types are re-exported at the crate level so callers never need to
+reach into the submodules directly.
 */
 
 pub mod agent_core;
+pub(crate) mod executor;
 pub mod stream;
 
 pub use agent_core::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
