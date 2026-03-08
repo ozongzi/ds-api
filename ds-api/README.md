@@ -1,278 +1,274 @@
-ds-api-workspace/ds-api/README.md
-# ds-api — Rust client for DeepSeek (refactored)
+# ds_api
 
-This crate provides a layered, ergonomic Rust client for the DeepSeek chat API.
+**Your Rust functions. DeepSeek's brain. Zero glue code.**
 
-Quick Start
-- Requirements: Rust toolchain and an environment variable `DEEPSEEK_API_KEY` with your API token.
-- The crate exposes both low-level `raw` types and higher-level ergonomics via `ApiRequest`, `ApiClient`, `DeepseekConversation`, and `DeepseekAgent`.
-
-Example: simple non-streaming request (async, requires Tokio)
-```rust
-use ds_api::{ApiClient, ApiRequest};
-use ds_api::raw::request::message::Message;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = std::env::var("DEEPSEEK_API_KEY")?;
-    let client = ApiClient::new(token);
-
-    let req = ApiRequest::deepseek_chat(vec![
-        Message::user("Hello from Rust"),
-    ])
-    .max_tokens(150)
-    .json();
-
-    let resp = client.send(req).await?;
-    // Print debug representation of the response; adapt to your needs.
-    println!("Response: {:?}", resp);
-    Ok(())
-}
+```
+cargo add ds_api
 ```
 
-Example: minimal `DeepseekAgent` with a sample tool
-```rust
-use ds_api::{DeepseekAgent, tool};
-use futures::StreamExt;
-use serde_json::json;
+---
 
-struct EchoTool;
+## The Problem
+
+Building an LLM agent means writing a pile of code that has nothing to do with your actual problem:
+
+- Hand-craft JSON schemas for every tool
+- Parse and validate tool arguments from raw JSON
+- Detect tool calls in the response
+- Implement an agent loop that re-sends results to the model
+- Wire up streaming yourself
+
+Every project. Every time.
+
+---
+
+## The Solution
+
+One macro. Your methods become AI tools.
+
+```rust
+use ds_api::{AgentEvent, DeepseekAgent, tool};
+use futures::StreamExt;
+use serde_json::{Value, json};
+
+struct Search;
 
 #[tool]
-impl ds_api::Tool for EchoTool {
-    async fn echo(&self, input: String) -> serde_json::Value {
-        json!({ "echo": input })
+impl Tool for Search {
+    /// Search the web for a query.
+    /// query: the search query
+    async fn search(&self, query: String) -> Value {
+        json!({ "results": format!("top results for: {query}") })
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let token = std::env::var("DEEPSEEK_API_KEY").unwrap();
-    let agent = DeepseekAgent::new(token).add_tool(EchoTool);
+    let agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
+        .add_tool(Search);
 
-    // AgentStream yields Result<AgentResponse, ApiError>
-    let mut s = agent.chat("Please echo: hello");
-    while let Some(event) = s.next().await {
+    let mut stream = agent.chat("What is Rust's ownership model?");
+
+    while let Some(event) = stream.next().await {
         match event {
-            Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(ev) => {
-                if let Some(content) = &ev.content {
-                    println!("Assistant: {}", content);
-                }
-                for tc in &ev.tool_calls {
-                    println!("Tool call: {} -> {}", tc.name, tc.result);
-                }
-            }
+            Ok(AgentEvent::Token(text))   => print!("{text}"),
+            Ok(AgentEvent::ToolCall(c))   => println!("\n[→ {}({})]", c.name, c.args),
+            Ok(AgentEvent::ToolResult(r)) => println!("[✓ {}]", r.result),
+            Err(e)                        => eprintln!("error: {e}"),
         }
     }
 }
 ```
 
-Example: streaming text with `.with_streaming()`
+No schema. No argument parsing. No loop. Just your function.
+
+---
+
+## Key Features
+
+### `#[tool]` — Zero-boilerplate tool registration
+
+Annotate any `async fn`. The macro reads your doc comments, infers the JSON schema from your types, and registers everything automatically.
+
 ```rust
-// Add .with_streaming() to receive text fragments as they arrive.
-let agent = DeepseekAgent::new(token).with_streaming().add_tool(EchoTool);
-let mut s = agent.chat("Please echo: hello");
-while let Some(event) = s.next().await {
-    match event {
-        Err(e) => { eprintln!("Error: {e}"); break; }
-        Ok(ev) => { if let Some(fragment) = &ev.content { print!("{}", fragment); } }
+#[tool]
+impl Tool for Database {
+    /// Query the database and return matching rows.
+    /// sql: SQL query to execute
+    /// limit: maximum number of rows to return
+    async fn query(&self, sql: String, limit: Option<u32>) -> Value {
+        // your real implementation
     }
 }
 ```
 
-High-level design
-- raw — low-level types that mirror the API JSON (kept under `ds_api::raw` but not recommended).
-- api — safe, chainable request builder and HTTP client (`ApiRequest`, `ApiClient`).
-- conversation — session management and summarization (`DeepseekConversation`, `Summarizer`).
-- agent — agent orchestration with tools and auto-summary (`DeepseekAgent`).
+- **Doc comment → tool description.** No separate description field.
+- **`param: description` in doc → parameter description.** Inline.
+- **`Option<T>` → optional parameter.** The schema marks it non-required automatically.
+- **Compile error on unsupported types.** You find out at build time, not runtime.
 
-This README documents the new API, breaking changes, migration steps, and examples.
+Supported types: `String`, `bool`, `f32/f64`, all integer primitives, `Vec<T>`, `Option<T>`.
 
-## Quick highlights (new API)
+---
 
-- ApiRequest — chainable, safe builder. Use `ApiRequest::builder()` or `ApiRequest::deepseek_chat(...)` / `ApiRequest::deepseek_reasoner(...)` to choose a model (Model enum is intentionally not exported).
-- ApiClient — owns token/base_url/reqwest::Client; send blocking or streaming requests.
-- DeepseekConversation — manages history and auto-summary via the `Summarizer` trait. Default summarizer is `TokenBasedSummarizer`.
-- DeepseekAgent — high-level agent that combines a conversation, tools (via `tool` macro), and auto summary. `chat(...)` returns `AgentStream` which yields `Result<AgentResponse, ApiError>`. Tool calls produce two events: a preview (result = `null`) then execution results. Use `.with_streaming()` to receive text fragments as they arrive.
-- raw module still available under `ds_api::raw` for advanced users, but not part of the primary recommended API.
+### Typed event stream — `AgentEvent`
 
-## Breaking changes (important)
+`chat()` returns a stream of strongly-typed events. The compiler forces you to handle every case.
 
-This refactor intentionally removes compatibility with older API shapes. Notable breaking items:
-
-- `Request` and `DeepseekClient` (previous high-level types) have been removed. Use `ApiRequest` and `ApiClient` instead.
-- `NormalChatter` and `SimpleChatter` were removed. Use `DeepseekConversation` and `DeepseekAgent`.
-- `Model` enum is no longer exported directly as part of the public API. Use `ApiRequest::deepseek_chat(...)` or `ApiRequest::deepseek_reasoner(...)` to choose a model.
-- Unsafe raw accessors (e.g. `from_raw_unchecked`, `get_raw_mut`) have been removed from the public API.
-- Summarization is now pluggable via the `Summarizer` trait. Default `TokenBasedSummarizer` skips `system` messages when estimating tokens and triggers at the default threshold (100_000 tokens estimate).
-
-If you're migrating from the old crate:
-- Replace `Request` -> `ApiRequest`
-- Replace `DeepseekClient` -> `ApiClient`
-- Replace `NormalChatter` -> `DeepseekConversation` (or `DeepseekAgent` if you need tools)
-- Replace `SimpleChatter` -> `DeepseekConversation` thin wrapper as needed
-
-## Example: simple non-streaming request
-
-```ds-api-workspace/ds-api/examples/agent_demo.rs#L1-40
-// Build an ApiRequest and send a non-streaming call.
-use ds_api::{ApiClient, ApiRequest};
-use ds_api::raw::request::message::Message;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let token = std::env::var("DEEPSEEK_API_KEY")?;
-    let client = ApiClient::new(token);
-
-    let req = ApiRequest::deepseek_chat(vec![
-        Message::new(ds_api::raw::request::message::Role::User, "Hello from Rust"),
-    ])
-    .max_tokens(150)
-    .json();
-
-    let resp = client.send(req).await?;
-    // Print debug representation of the response; adapt to your needs.
-    println!("Response: {:?}", resp);
-    Ok(())
+```rust
+match event? {
+    AgentEvent::Token(text)    => /* assistant is typing    */,
+    AgentEvent::ToolCall(c)    => /* model called a tool    */,
+    AgentEvent::ToolResult(r)  => /* tool finished, here's r.result */,
 }
 ```
 
-## Example: streaming text from ApiClient
+No `if result.is_null()` hacks. No optional fields you have to remember to check. Each variant carries exactly what it means.
 
-```ds-api-workspace/ds-api/examples/agent_demo.rs#L40-120
-use ds_api::{ApiClient, ApiRequest};
+In streaming mode, `Token` arrives as SSE deltas. In non-streaming mode, it arrives as one chunk. Your match arm handles both.
+
+---
+
+### Automatic agent loop
+
+The model requests a tool → `ds_api` executes it → feeds the result back → asks the model again. This continues until the model stops calling tools. You never write that loop.
+
+```
+User prompt
+   └─▶ API call
+         └─▶ ToolCall event (model wants data)
+               └─▶ your function runs
+                     └─▶ ToolResult event (result fed back)
+                           └─▶ API call (model continues)
+                                 └─▶ Token events (final answer)
+```
+
+---
+
+### Context window management — automatic summarization
+
+Long conversations are compressed automatically. The default summarizer (`LlmSummarizer`) calls DeepSeek to write a concise semantic summary of older turns, replaces them with a single system message, and keeps the most recent turns verbatim. Your `with_system_prompt` messages are never touched.
+
+```rust
+use ds_api::{LlmSummarizer, ApiClient};
+
+// Default: trigger at ~60 000 estimated tokens, retain last 10 turns.
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(LlmSummarizer::new(ApiClient::new(&token)));
+
+// Custom thresholds:
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(
+        LlmSummarizer::new(ApiClient::new(&token))
+            .token_threshold(40_000)
+            .retain_last(6),
+    );
+```
+
+If you prefer zero extra API calls, use `SlidingWindowSummarizer` instead — it keeps the last N turns and silently drops everything older:
+
+```rust
+use ds_api::SlidingWindowSummarizer;
+
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(SlidingWindowSummarizer::new(20));
+```
+
+Your agent stays within context limits without you counting tokens.
+
+---
+
+### Reusable agents — `into_agent()`
+
+`chat()` consumes the agent to keep the borrow checker happy inside the async state machine. Get it back when the stream ends:
+
+```rust
+let mut agent = DeepseekAgent::new(token)
+    .with_streaming()
+    .add_tool(Shell);
+
+loop {
+    let mut stream = agent.chat(&prompt);
+    while let Some(ev) = stream.next().await { /* ... */ }
+    agent = stream.into_agent().unwrap(); // ← agent back, history intact
+}
+```
+
+Full REPL with persistent conversation history. No cloning. No `Arc<Mutex<>>`.
+
+---
+
+## Real Example — Shell Agent
+
+```rust
+use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
+use serde_json::{Value, json};
+use tokio::process::Command;
 
-let token = std::env::var("DEEPSEEK_API_KEY")?;
-let client = ApiClient::new(token);
-
-let req = ApiRequest::deepseek_chat(vec![Message::new(Role::User, "Tell me a story")])
-    .stream(true);
-
-let mut stream = client.stream_text(req).await?;
-while let Some(chunk_res) = stream.next().await {
-    match chunk_res {
-        Ok(text) => print!("{}", text),
-        Err(err) => eprintln!("Stream error: {}", err),
-    }
-}
-```
-
-## Example: DeepseekConversation (auto summary)
-
-```ds-api-workspace/ds-api/examples/agent_demo.rs#L120-200
-use ds_api::{ApiClient, ApiRequest, DeepseekConversation, Message, Role};
-
-let token = std::env::var("DEEPSEEK_API_KEY")?;
-let client = ApiClient::new(token);
-
-let mut conv = DeepseekConversation::new(client.clone())
-    .with_history(vec![Message::new(Role::System, "You are a helpful assistant.")]);
-
-conv.push_user_input("Hello! Tell me about Rust.".to_string());
-let reply = conv.send_once().await?;
-println!("Assistant: {:?}", reply);
-```
-
-## Example: DeepseekAgent with tools (preferred flow)
-
-- Agent yields two-phase events when the model triggers tool calls:
-  1. First yield: assistant `content` paired with `tool_calls` preview (result is `null`).
-  2. Second yield: tool execution results (and these results are appended to conversation history as `Role::Tool` messages).
-
-Tool functions are declared with the `#[tool]` macro.
-
-```ds-api-workspace/ds-api/examples/agent_demo.rs#L1-200
-use ds_api::{DeepseekAgent, tool};
-use futures::StreamExt;
-use serde_json::json;
-
-struct WeatherTool {
-    client: reqwest::Client,
-}
+struct Shell;
 
 #[tool]
-impl Tool for WeatherTool {
-    /// Get weather for a city
-    async fn get_weather(&self, city: String, _unit: Option<String>) -> serde_json::Value {
-        let url = format!("https://wttr.in/{}?format=3", city);
-        let text = self.client.get(&url).send().await
-            .and_then(|r| r.text().await)
-            .unwrap_or_else(|e| e.to_string());
-        json!({ "city": city, "weather": text })
+impl Tool for Shell {
+    /// Execute a shell command and return stdout/stderr.
+    /// command: the shell command to run
+    async fn run(&self, command: String) -> Value {
+        let out = Command::new("sh").arg("-c").arg(&command)
+            .output().await.unwrap();
+        json!({
+            "stdout": String::from_utf8_lossy(&out.stdout),
+            "stderr": String::from_utf8_lossy(&out.stderr),
+            "status": out.status.code(),
+        })
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let token = std::env::var("DEEPSEEK_API_KEY").unwrap();
-    let agent = DeepseekAgent::new(token)
-        .add_tool(WeatherTool { client: reqwest::Client::new() })
-        .with_system_prompt("You are an assistant that can call tools.");
+    let mut agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
+        .with_streaming()
+        .with_system_prompt("You may run shell commands to answer questions.")
+        .add_tool(Shell);
 
-    let mut s = agent.chat("What's the weather in Beijing and Shanghai?");
-    while let Some(event) = s.next().await {
-        match event {
-            Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(ev) => {
-                if let Some(content) = &ev.content {
-                    println!("Assistant: {}", content);
-                }
-                for tc in &ev.tool_calls {
-                    println!("Tool call preview/result: {} {} -> {}", tc.name, tc.args, tc.result);
-                }
+    loop {
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+
+        let mut stream = agent.chat(line.trim());
+        while let Some(ev) = stream.next().await {
+            match ev {
+                Ok(AgentEvent::Token(t))   => print!("{t}"),
+                Ok(AgentEvent::ToolCall(c))   => println!("\n$ {}", c.args["command"].as_str().unwrap_or("")),
+                Ok(AgentEvent::ToolResult(r)) => println!("{}", r.result["stdout"].as_str().unwrap_or("")),
+                Err(e) => eprintln!("{e}"),
             }
         }
+        agent = stream.into_agent().unwrap();
     }
 }
 ```
 
-## Summarizer and auto-summary behavior
+The model decides when to call the shell. You just receive the events.
 
-- `Summarizer` trait: pluggable abstraction for summarization.
-- Default: `TokenBasedSummarizer`:
-  - Rough token estimate uses `chars / 4`.
-  - SKIPS `system` messages when computing the estimate.
-  - Default threshold: 100_000 estimated tokens (configurable).
-  - When triggered, older messages are summarized into a single `system` message (prefixed/marked with `[auto-summary]` in `name`).
+---
 
-You can implement `Summarizer` to call an LLM for semantic summaries or to use a different heuristic.
+## What You Never Write
 
-## Migration guidance
+| Without ds_api | With ds_api |
+|---|---|
+| JSON schema per tool | `#[tool]` |
+| Argument deserialization | automatic |
+| Tool call detection | automatic |
+| Agent loop | automatic |
+| Token counting / context trimming | automatic |
+| Streaming SSE wiring | automatic |
 
-- Replace previous usage of `Request::basic_query(...)` with `ApiRequest::deepseek_chat(...)` or `ApiRequest::builder()`.
-- Use `ApiClient::new(token)` instead of `DeepseekClient`.
-- Replace `NormalChatter` and `SimpleChatter` with `DeepseekConversation` or `DeepseekAgent`.
-- If you previously relied on raw accessors, migrate carefully — raw module still exists at `ds_api::raw` but the recommended approach is through `ApiRequest` and `ApiClient`.
+---
 
-## Project layout (high level)
+## Installation
 
-- `src/raw` — raw request/response types (kept for advanced use).
-- `src/api.rs` — `ApiRequest`, `ApiClient`.
-- `src/conversation/mod.rs` — `DeepseekConversation`, `Summarizer` + default summarizer.
-- `src/agent.rs` — `DeepseekAgent` and streaming agent orchestration.
-- `src/tool.rs` + `ds-api-macros` crate — tooling macro and Tool trait.
-
-## Tests, linting, and build
-- The project uses `cargo` for builds, and Clippy is enforced. After refactor we run `cargo clippy -p ds-api -- -D warnings` as part of CI.
-- Run:
-```ds-api-workspace/ds-api/README.md#L1-1
-# in repo root
-cargo build
-cargo test
-cargo clippy -p ds-api -- -D warnings
+```toml
+[dependencies]
+ds_api = "0.5"
+tokio  = { version = "1", features = ["full"] }
+futures = "0.3"
 ```
 
-## Contributing & Release notes
+```
+export DEEPSEEK_API_KEY=your_key_here
+```
 
-- This refactor is breaking by design. A migration guide is in this README (above).
-- If you maintain downstream consumers, notify them about:
-  - Removed `Request`/`DeepseekClient`, `NormalChatter`, `SimpleChatter`.
-  - New preferred entry points: `ApiRequest`, `ApiClient`, `DeepseekConversation`, `DeepseekAgent`.
-- Future work:
-  - Provide thin compatibility wrappers (if required).
-  - Improve summarizer with a semantic LLM-backed default option (configurable).
+---
+
+## Roadmap
+
+- OpenAI-compatible providers
+- Structured output support
+- `#[tool]` support for custom `serde` types
+- More examples
+
+---
 
 ## License
-Check `Cargo.toml` for license information.
+
+MIT OR Apache-2.0
