@@ -65,8 +65,8 @@ fn type_to_json_schema(ty: &Type) -> TokenStream2 {
                 "String" | "str" => quote!(serde_json::json!({"type": "string"})),
                 "bool" => quote!(serde_json::json!({"type": "boolean"})),
                 "f32" | "f64" => quote!(serde_json::json!({"type": "number"})),
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-                | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => {
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+                | "i128" | "isize" => {
                     quote!(serde_json::json!({"type": "integer"}))
                 }
                 // Option<T> — recurse into T
@@ -249,7 +249,11 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #tool_name => {
                 #(#arg_parses)*
-                { #body }
+                let __result = { #body };
+                match serde_json::to_value(__result) {
+                    Ok(v) => v,
+                    Err(e) => serde_json::json!({ "error": format!("serialization error: {}", e) }),
+                }
             }
         }
     });

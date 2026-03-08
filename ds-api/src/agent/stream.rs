@@ -5,11 +5,11 @@ use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 
-use crate::agent::agent_core::{AgentResponse, DeepseekAgent, ToolCallEvent};
+use crate::agent::agent_core::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
 use crate::conversation::Conversation;
 use crate::error::ApiError;
-use crate::raw::request::message::{FunctionCall, Message, Role, ToolCall, ToolType};
 use crate::raw::ChatCompletionChunk;
+use crate::raw::request::message::{FunctionCall, Message, Role, ToolCall, ToolType};
 
 // ── Internal result types ────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ struct FetchResult {
 }
 
 struct ToolsResult {
-    events: Vec<ToolCallEvent>,
+    results: Vec<ToolCallResult>,
 }
 
 // ── Streaming accumulator ────────────────────────────────────────────────────
@@ -39,8 +39,9 @@ struct StreamingData {
 
 // ── Type aliases for future outputs ─────────────────────────────────────────
 
-type FetchFuture =
-    Pin<Box<dyn std::future::Future<Output = (Result<FetchResult, ApiError>, DeepseekAgent)> + Send>>;
+type FetchFuture = Pin<
+    Box<dyn std::future::Future<Output = (Result<FetchResult, ApiError>, DeepseekAgent)> + Send>,
+>;
 
 type ConnectFuture = Pin<
     Box<
@@ -53,14 +54,19 @@ type ConnectFuture = Pin<
     >,
 >;
 
-type ExecFuture =
-    Pin<Box<dyn std::future::Future<Output = (ToolsResult, DeepseekAgent)> + Send>>;
+type ExecFuture = Pin<Box<dyn std::future::Future<Output = (ToolsResult, DeepseekAgent)> + Send>>;
 
 // ── State machine ────────────────────────────────────────────────────────────
 
 pub struct AgentStream {
     agent: Option<DeepseekAgent>,
     state: AgentStreamState,
+    /// Pending ToolCall events to yield before kicking off tool execution.
+    pending_tool_calls: Vec<ToolCallInfo>,
+    /// Raw tool calls waiting to be executed once all ToolCall previews have been yielded.
+    queued_raw_calls: Vec<ToolCall>,
+    /// Completed ToolResult events to yield before moving back to Idle.
+    pending_tool_results: Vec<ToolCallResult>,
 }
 
 enum AgentStreamState {
@@ -68,7 +74,11 @@ enum AgentStreamState {
     FetchingResponse(FetchFuture),
     ConnectingStream(ConnectFuture),
     StreamingChunks(Box<StreamingData>),
+    /// Draining `pending_tool_calls` — no future in flight yet.
+    YieldingToolCalls,
     ExecutingTools(ExecFuture),
+    /// Draining `pending_tool_results` — no future in flight.
+    YieldingToolResults,
     Done,
 }
 
@@ -77,6 +87,9 @@ impl AgentStream {
         Self {
             agent: Some(agent),
             state: AgentStreamState::Idle,
+            pending_tool_calls: Vec::new(),
+            queued_raw_calls: Vec::new(),
+            pending_tool_results: Vec::new(),
         }
     }
 
@@ -89,20 +102,18 @@ impl AgentStream {
 }
 
 impl Stream for AgentStream {
-    type Item = Result<AgentResponse, ApiError>;
+    type Item = Result<AgentEvent, ApiError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
         loop {
-            // StreamingChunks is handled first to avoid borrow-checker conflicts when
-            // we need to both poll the inner stream and replace `this.state`.
+            // ── StreamingChunks needs special handling to avoid borrow-checker conflicts ──
             if matches!(this.state, AgentStreamState::StreamingChunks(_)) {
-                let mut data =
-                    match std::mem::replace(&mut this.state, AgentStreamState::Done) {
-                        AgentStreamState::StreamingChunks(d) => d,
-                        _ => unreachable!(),
-                    };
+                let mut data = match std::mem::replace(&mut this.state, AgentStreamState::Done) {
+                    AgentStreamState::StreamingChunks(d) => d,
+                    _ => unreachable!(),
+                };
 
                 match data.stream.poll_next_unpin(cx) {
                     Poll::Pending => {
@@ -159,22 +170,20 @@ impl Stream for AgentStream {
 
                         this.state = AgentStreamState::StreamingChunks(data);
 
-                        if let Some(content) = fragment {
-                            return Poll::Ready(Some(Ok(AgentResponse {
-                                content: Some(content),
-                                tool_calls: vec![],
-                            })));
+                        if let Some(text) = fragment {
+                            return Poll::Ready(Some(Ok(AgentEvent::Token(text))));
                         }
                         continue;
                     }
 
                     Poll::Ready(Some(Err(e))) => {
-                        // Propagate the stream error; state stays Done.
                         this.agent = Some(data.agent);
+                        // state stays Done
                         return Poll::Ready(Some(Err(e)));
                     }
 
                     Poll::Ready(None) => {
+                        // SSE stream finished — assemble raw tool calls from buffers.
                         let raw_tool_calls: Vec<ToolCall> = data
                             .tool_call_bufs
                             .into_iter()
@@ -207,16 +216,24 @@ impl Stream for AgentStream {
 
                         if raw_tool_calls.is_empty() {
                             this.agent = Some(data.agent);
+                            this.state = AgentStreamState::Done;
                             return Poll::Ready(None);
                         }
 
-                        let preview_events = build_preview(&raw_tool_calls);
-                        let fut = Box::pin(execute_tools(data.agent, raw_tool_calls));
-                        this.state = AgentStreamState::ExecutingTools(fut);
-                        return Poll::Ready(Some(Ok(AgentResponse {
-                            content: None,
-                            tool_calls: preview_events,
-                        })));
+                        // Queue individual ToolCall preview events.
+                        this.pending_tool_calls = raw_tool_calls
+                            .iter()
+                            .map(|tc| ToolCallInfo {
+                                id: tc.id.clone(),
+                                name: tc.function.name.clone(),
+                                args: serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(Value::Null),
+                            })
+                            .collect();
+                        this.queued_raw_calls = raw_tool_calls;
+                        this.agent = Some(data.agent);
+                        this.state = AgentStreamState::YieldingToolCalls;
+                        continue;
                     }
                 }
             }
@@ -244,60 +261,89 @@ impl Stream for AgentStream {
                             return Poll::Ready(Some(Err(e)));
                         }
                         Poll::Ready((Ok(fetch), agent)) => {
+                            this.agent = Some(agent);
+
+                            // Yield text first if present.
                             if fetch.raw_tool_calls.is_empty() {
-                                this.agent = Some(agent);
                                 this.state = AgentStreamState::Done;
-                                return Poll::Ready(Some(Ok(AgentResponse {
-                                    content: fetch.content,
-                                    tool_calls: vec![],
-                                })));
+                                // Only yield a Token if there is actual content.
+                                return if let Some(text) = fetch.content {
+                                    Poll::Ready(Some(Ok(AgentEvent::Token(text))))
+                                } else {
+                                    Poll::Ready(None)
+                                };
                             }
 
-                            let content = fetch.content.clone();
-                            let raw_calls = fetch.raw_tool_calls;
-                            let preview_events = build_preview(&raw_calls);
-                            let fut = Box::pin(execute_tools(agent, raw_calls));
-                            this.state = AgentStreamState::ExecutingTools(fut);
-                            return Poll::Ready(Some(Ok(AgentResponse {
-                                content,
-                                tool_calls: preview_events,
-                            })));
+                            // There are tool calls — queue ToolCall previews.
+                            // If there's also text content, yield it as Token first,
+                            // then continue to YieldingToolCalls on the next poll.
+                            this.pending_tool_calls = fetch
+                                .raw_tool_calls
+                                .iter()
+                                .map(|tc| ToolCallInfo {
+                                    id: tc.id.clone(),
+                                    name: tc.function.name.clone(),
+                                    args: serde_json::from_str(&tc.function.arguments)
+                                        .unwrap_or(Value::Null),
+                                })
+                                .collect();
+                            this.queued_raw_calls = fetch.raw_tool_calls;
+                            this.state = AgentStreamState::YieldingToolCalls;
+
+                            if let Some(text) = fetch.content {
+                                return Poll::Ready(Some(Ok(AgentEvent::Token(text))));
+                            }
+                            // No text — fall through to drain YieldingToolCalls.
+                            continue;
                         }
                     }
                 }
 
-                AgentStreamState::ConnectingStream(fut) => {
-                    match fut.as_mut().poll(cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready((Err(e), agent)) => {
-                            this.agent = Some(agent);
-                            this.state = AgentStreamState::Done;
-                            return Poll::Ready(Some(Err(e)));
-                        }
-                        Poll::Ready((Ok(stream), agent)) => {
-                            this.state =
-                                AgentStreamState::StreamingChunks(Box::new(StreamingData {
-                                    stream,
-                                    agent,
-                                    content_buf: String::new(),
-                                    tool_call_bufs: Vec::new(),
-                                }));
-                        }
+                AgentStreamState::ConnectingStream(fut) => match fut.as_mut().poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready((Err(e), agent)) => {
+                        this.agent = Some(agent);
+                        this.state = AgentStreamState::Done;
+                        return Poll::Ready(Some(Err(e)));
                     }
+                    Poll::Ready((Ok(stream), agent)) => {
+                        this.state = AgentStreamState::StreamingChunks(Box::new(StreamingData {
+                            stream,
+                            agent,
+                            content_buf: String::new(),
+                            tool_call_bufs: Vec::new(),
+                        }));
+                    }
+                },
+
+                AgentStreamState::YieldingToolCalls => {
+                    if let Some(info) = this.pending_tool_calls.first().cloned() {
+                        this.pending_tool_calls.remove(0);
+                        return Poll::Ready(Some(Ok(AgentEvent::ToolCall(info))));
+                    }
+                    // All previews yielded — now execute the tools.
+                    let agent = this.agent.take().expect("agent missing");
+                    let raw_calls = std::mem::take(&mut this.queued_raw_calls);
+                    let fut = Box::pin(execute_tools(agent, raw_calls));
+                    this.state = AgentStreamState::ExecutingTools(fut);
                 }
 
-                AgentStreamState::ExecutingTools(fut) => {
-                    match fut.as_mut().poll(cx) {
-                        Poll::Pending => return Poll::Pending,
-                        Poll::Ready((results, agent)) => {
-                            this.agent = Some(agent);
-                            this.state = AgentStreamState::Idle;
-                            return Poll::Ready(Some(Ok(AgentResponse {
-                                content: None,
-                                tool_calls: results.events,
-                            })));
-                        }
+                AgentStreamState::ExecutingTools(fut) => match fut.as_mut().poll(cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready((tools_result, agent)) => {
+                        this.agent = Some(agent);
+                        this.pending_tool_results = tools_result.results;
+                        this.state = AgentStreamState::YieldingToolResults;
                     }
+                },
+
+                AgentStreamState::YieldingToolResults => {
+                    if let Some(result) = this.pending_tool_results.first().cloned() {
+                        this.pending_tool_results.remove(0);
+                        return Poll::Ready(Some(Ok(AgentEvent::ToolResult(result))));
+                    }
+                    // All results yielded — loop back for another API turn.
+                    this.state = AgentStreamState::Idle;
                 }
 
                 AgentStreamState::StreamingChunks(_) => unreachable!(),
@@ -307,18 +353,6 @@ impl Stream for AgentStream {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn build_preview(raw_calls: &[ToolCall]) -> Vec<ToolCallEvent> {
-    raw_calls
-        .iter()
-        .map(|tc| ToolCallEvent {
-            id: tc.id.clone(),
-            name: tc.function.name.clone(),
-            args: serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null),
-            result: Value::Null,
-        })
-        .collect()
-}
 
 fn build_request(agent: &DeepseekAgent) -> crate::api::ApiRequest {
     let history = agent.conversation.history().clone();
@@ -346,7 +380,12 @@ async fn fetch_response(
 
     let choice = match resp.choices.into_iter().next() {
         Some(c) => c,
-        None => return (Err(ApiError::Other("empty response: no choices".into())), agent),
+        None => {
+            return (
+                Err(ApiError::Other("empty response: no choices".into())),
+                agent,
+            );
+        }
     };
 
     let assistant_msg = choice.message;
@@ -354,7 +393,13 @@ async fn fetch_response(
     let raw_tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
     agent.conversation.history_mut().push(assistant_msg);
 
-    (Ok(FetchResult { content, raw_tool_calls }), agent)
+    (
+        Ok(FetchResult {
+            content,
+            raw_tool_calls,
+        }),
+        agent,
+    )
 }
 
 async fn connect_stream(
@@ -374,7 +419,7 @@ async fn execute_tools(
     mut agent: DeepseekAgent,
     raw_tool_calls: Vec<ToolCall>,
 ) -> (ToolsResult, DeepseekAgent) {
-    let mut events = vec![];
+    let mut results = vec![];
 
     for tc in raw_tool_calls {
         let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
@@ -393,7 +438,7 @@ async fn execute_tools(
             ..Default::default()
         });
 
-        events.push(ToolCallEvent {
+        results.push(ToolCallResult {
             id: tc.id,
             name: tc.function.name,
             args,
@@ -401,5 +446,5 @@ async fn execute_tools(
         });
     }
 
-    (ToolsResult { events }, agent)
+    (ToolsResult { results }, agent)
 }

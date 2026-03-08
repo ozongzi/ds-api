@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-03-08
+
+### Summary
+Breaking release: the agent event type has been redesigned from a flat struct to a proper enum.
+
+### Breaking changes
+- `AgentResponse` struct removed. Replaced by `AgentEvent` enum.
+- `ToolCallEvent` struct removed. Replaced by two focused structs:
+  - `ToolCallInfo` — carries `id`, `name`, `args`; yielded before execution.
+  - `ToolCallResult` — carries `id`, `name`, `args`, `result`; yielded after execution.
+- `AgentStream` now implements `Stream<Item = Result<AgentEvent, ApiError>>`.
+- Tool call previews and results are now yielded **one per event** (previously batched in a `Vec`).
+- The old `tc.result == Value::Null` idiom for distinguishing previews from results is gone; the variant itself encodes the distinction.
+
+### Migration
+
+Replace:
+```rust
+// old
+use ds_api::{AgentResponse, ToolCallEvent};
+
+while let Some(event) = stream.next().await {
+    let ev = event?;
+    if let Some(text) = ev.content {
+        print!("{text}");
+    }
+    for tc in ev.tool_calls {
+        if tc.result.is_null() {
+            println!("[calling {}({})]", tc.name, tc.args);
+        } else {
+            println!("[result] {}", tc.result);
+        }
+    }
+}
+```
+with:
+```rust
+// new
+use ds_api::AgentEvent;
+
+while let Some(event) = stream.next().await {
+    match event? {
+        AgentEvent::Token(text)    => print!("{text}"),
+        AgentEvent::ToolCall(c)    => println!("[calling {}({})]", c.name, c.args),
+        AgentEvent::ToolResult(r)  => println!("[result] {}", r.result),
+    }
+}
+```
+
+### Notes
+- The `AgentEvent::Token` variant carries assistant text in both streaming and non-streaming modes. In streaming mode each `Token` is a single SSE delta; in non-streaming mode the full response text arrives as one `Token`.
+- `ToolCall` and `ToolResult` events are emitted in matching order (first call → first result).
+
 ## [0.3.2] - 2026-03-01
 
 ### Summary

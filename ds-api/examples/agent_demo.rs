@@ -1,7 +1,7 @@
-use ds_api::{DeepseekAgent, tool};
+use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::json;
 
 struct WeatherTool {
     client: Client,
@@ -36,25 +36,22 @@ async fn main() {
     println!("=== Non-streaming ===");
 
     let agent = DeepseekAgent::new(&token)
-        .add_tool(WeatherTool { client: Client::new() })
+        .add_tool(WeatherTool {
+            client: Client::new(),
+        })
         .with_system_prompt("You are a helpful assistant.");
 
     let mut stream = agent.chat("Check the weather for Beijing and Shanghai");
 
     while let Some(event) = stream.next().await {
         match event {
-            Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(response) => {
-                if let Some(content) = &response.content {
-                    println!("Assistant: {}", content);
-                }
-                for tc in &response.tool_calls {
-                    println!("Tool call {}({})", tc.name, tc.args);
-                    if tc.result != Value::Null {
-                        println!("-> {}", tc.result);
-                    }
-                }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                break;
             }
+            Ok(AgentEvent::Token(text)) => println!("Assistant: {}", text),
+            Ok(AgentEvent::ToolCall(c)) => println!("Tool call {}({})", c.name, c.args),
+            Ok(AgentEvent::ToolResult(r)) => println!("-> {}", r.result),
         }
     }
 
@@ -66,30 +63,24 @@ async fn main() {
 
     let agent = DeepseekAgent::new(&token)
         .with_streaming()
-        .add_tool(WeatherTool { client: Client::new() })
+        .add_tool(WeatherTool {
+            client: Client::new(),
+        })
         .with_system_prompt("You are a helpful assistant.");
 
     let mut stream = agent.chat("Check the weather for Beijing and Shanghai");
 
     while let Some(event) = stream.next().await {
         match event {
-            Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(response) => {
-                if let Some(fragment) = &response.content {
-                    // In streaming mode each AgentResponse with content is a single
-                    // text fragment — print without a newline to show them inline.
-                    print!("{}", fragment);
-                }
-                for tc in &response.tool_calls {
-                    if tc.result == Value::Null {
-                        // Preview event: the model requested this tool call.
-                        println!("\n[calling {}({})]", tc.name, tc.args);
-                    } else {
-                        // Result event: the tool finished executing.
-                        println!("[result] {}", tc.result);
-                    }
-                }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                break;
             }
+            // In streaming mode each Token is a single text fragment —
+            // print without a newline to show them inline.
+            Ok(AgentEvent::Token(text)) => print!("{}", text),
+            Ok(AgentEvent::ToolCall(c)) => println!("\n[calling {}({})]", c.name, c.args),
+            Ok(AgentEvent::ToolResult(r)) => println!("[result] {}", r.result),
         }
     }
     println!(); // final newline after streamed text

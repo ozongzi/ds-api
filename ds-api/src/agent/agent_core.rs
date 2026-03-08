@@ -6,24 +6,44 @@ use crate::raw::request::message::{Message, Role};
 use crate::tool_trait::Tool;
 use serde_json::Value;
 
-/// Tool call event (result).
+/// Information about a tool call requested by the model.
 ///
-/// Represents a single tool invocation result produced by the agent.
+/// Yielded as `AgentEvent::ToolCall` when the model requests a tool invocation.
+/// At this point the tool has not yet been executed.
 #[derive(Debug, Clone)]
-pub struct ToolCallEvent {
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+}
+
+/// The result of a completed tool invocation.
+///
+/// Yielded as `AgentEvent::ToolResult` after the tool has finished executing.
+#[derive(Debug, Clone)]
+pub struct ToolCallResult {
     pub id: String,
     pub name: String,
     pub args: Value,
     pub result: Value,
 }
 
-/// Single agent response exposed to callers.
+/// Events emitted by `AgentStream`.
 ///
-/// May contain assistant text content or a list of tool call events.
+/// Each variant represents a distinct, self-contained event in the agent lifecycle:
+///
+/// - `Token(String)` — a text fragment from the assistant. In streaming mode each
+///   `Token` is a single SSE delta; in non-streaming mode the full response text
+///   arrives as one `Token`.
+/// - `ToolCall(ToolCallInfo)` — the model has requested a tool invocation. One event
+///   is emitted per requested call, before execution begins.
+/// - `ToolResult(ToolCallResult)` — a tool has finished executing. One event is
+///   emitted per call, in the same order as the corresponding `ToolCall` events.
 #[derive(Debug, Clone)]
-pub struct AgentResponse {
-    pub content: Option<String>,
-    pub tool_calls: Vec<ToolCallEvent>,
+pub enum AgentEvent {
+    Token(String),
+    ToolCall(ToolCallInfo),
+    ToolResult(ToolCallResult),
 }
 
 /// DeepseekAgent: encapsulates a conversation (`Conversation`) and a collection of tools.

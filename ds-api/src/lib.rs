@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Example: DeepseekAgent with a minimal tool
 ```no_run
-use ds_api::{DeepseekAgent, tool};
+use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
 use serde_json::json;
 
@@ -49,21 +49,15 @@ async fn main() {
     let token = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set");
     let agent = DeepseekAgent::new(token).add_tool(EchoTool);
 
-    // The agent returns a stream of `AgentResponse` events. When the model triggers tool calls,
-    // the stream yields a preview (assistant content + tool call requests) followed by the tool results.
+    // The agent returns a stream of `AgentEvent` items. Each variant represents
+    // a distinct event: assistant text, a tool call request, or a tool result.
     let mut s = agent.chat("Please echo: hello");
     while let Some(event) = s.next().await {
         match event {
             Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(ev) => {
-                if let Some(content) = &ev.content {
-                    println!("Assistant: {}", content);
-                }
-                for tc in &ev.tool_calls {
-                    // ToolCallEvent fields: id, name, args, result
-                    println!("Tool call: {} -> {}", tc.name, tc.result);
-                }
-            }
+            Ok(AgentEvent::Token(text)) => println!("Assistant: {}", text),
+            Ok(AgentEvent::ToolCall(c)) => println!("Tool call: {}({})", c.name, c.args),
+            Ok(AgentEvent::ToolResult(r)) => println!("Result: {} -> {}", r.name, r.result),
         }
     }
 }
@@ -82,7 +76,7 @@ pub mod tool_trait;
 // Legacy convenience chat modules `NormalChatter` and `SimpleChatter` were removed
 // during the refactor. Use the new `ApiRequest` / `ApiClient` /
 // `DeepseekConversation` / `DeepseekAgent` APIs instead.
-pub use agent::{AgentResponse, DeepseekAgent, ToolCallEvent};
+pub use agent::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
 pub use api::{ApiClient, ApiRequest};
 pub use conversation::DeepseekConversation;
 pub use error::ApiError;

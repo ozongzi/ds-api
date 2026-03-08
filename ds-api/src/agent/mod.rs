@@ -17,5 +17,5 @@ and `ds_api::ToolCallEvent`.
 pub mod agent_core;
 pub mod stream;
 
-pub use agent_core::{AgentResponse, DeepseekAgent, ToolCallEvent};
+pub use agent_core::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
 pub use stream::AgentStream;
