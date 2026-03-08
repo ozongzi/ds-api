@@ -12,7 +12,7 @@ categories = ["api-bindings", "web-programming"]
 
 [dependencies]
 async-trait = "0.1"
-ds-api-macros = { version = "0.1.0", path = "../ds-api-macros" }
+ds-api-macros = { version = "0.1.2", path = "../ds-api-macros" }
 eventsource-stream = "0.2.3"
 futures = "0.3.31"
 reqwest = { version = "0.13", features = ["json", "stream"] }

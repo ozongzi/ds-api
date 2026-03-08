@@ -103,19 +103,19 @@ fn unsupported(ty: &Type) -> TokenStream2 {
 /// Extract the first generic type argument from a path segment, e.g. the `T`
 /// in `Option<T>` or `Vec<T>`.
 fn inner_type_arg(seg: &syn::PathSegment) -> Option<&Type> {
-    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-        if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
-            return Some(ty);
-        }
+    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(syn::GenericArgument::Type(ty)) = args.args.first()
+    {
+        return Some(ty);
     }
     None
 }
 
 fn is_option(ty: &Type) -> bool {
-    if let Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            return seg.ident == "Option";
-        }
+    if let Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last()
+    {
+        return seg.ident == "Option";
     }
     false
 }

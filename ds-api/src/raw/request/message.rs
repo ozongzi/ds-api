@@ -33,6 +33,12 @@ pub struct Message {
     pub prefix: Option<bool>,
 }
 
+/// The `name` value written by built-in summarizers to mark a system message
+/// as an auto-generated summary that may be replaced on the next summarization
+/// pass.  Any `Role::System` message **without** this tag is treated as a
+/// permanent user-provided system prompt and is never removed.
+pub const AUTO_SUMMARY_TAG: &str = "[auto-summary]";
+
 impl Message {
     pub fn new(role: Role, message: &str) -> Self {
         Self {
@@ -56,6 +62,25 @@ impl Message {
 
     pub fn system(message: &str) -> Self {
         Self::new(Role::System, message)
+    }
+
+    /// Returns `true` if this is an auto-generated summary message produced by
+    /// a built-in [`Summarizer`](crate::conversation::Summarizer) implementation.
+    ///
+    /// Auto-summary messages are `Role::System` messages whose `name` field is
+    /// set to [`AUTO_SUMMARY_TAG`].  They may be replaced on subsequent
+    /// summarization passes.  All other `Role::System` messages are permanent
+    /// user-provided prompts and must never be removed by a summarizer.
+    #[inline]
+    pub fn is_auto_summary(&self) -> bool {
+        matches!(self.role, Role::System) && self.name.as_deref() == Some(AUTO_SUMMARY_TAG)
+    }
+
+    /// Create an auto-summary system message wrapping the given text.
+    pub(crate) fn auto_summary(text: impl Into<String>) -> Self {
+        let mut msg = Self::new(Role::System, &text.into());
+        msg.name = Some(AUTO_SUMMARY_TAG.to_string());
+        msg
     }
 }
 

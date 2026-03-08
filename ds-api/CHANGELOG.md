@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 Breaking release: the agent event type has been redesigned from a flat struct to a proper enum.
 
 ### Breaking changes
+
+**Agent event type**
 - `AgentResponse` struct removed. Replaced by `AgentEvent` enum.
 - `ToolCallEvent` struct removed. Replaced by two focused structs:
   - `ToolCallInfo` — carries `id`, `name`, `args`; yielded before execution.
@@ -15,6 +17,13 @@ Breaking release: the agent event type has been redesigned from a flat struct to
 - `AgentStream` now implements `Stream<Item = Result<AgentEvent, ApiError>>`.
 - Tool call previews and results are now yielded **one per event** (previously batched in a `Vec`).
 - The old `tc.result == Value::Null` idiom for distinguishing previews from results is gone; the variant itself encodes the distinction.
+
+**Summarizer**
+- `TokenBasedSummarizer` removed.
+- `Summarizer::summarize` is now `async` (returns `Pin<Box<dyn Future<Output = Result<(), ApiError>>>>`). Any custom `Summarizer` implementation must be updated.
+- New default summarizer is `LlmSummarizer`, which calls DeepSeek to produce a semantic summary of older turns. It requires an `ApiClient` at construction time.
+- New alternative `SlidingWindowSummarizer` replaces `TokenBasedSummarizer` for cases where zero extra API calls are desired.
+- Permanent `Role::System` messages set via `with_system_prompt` are now protected and never removed by any built-in summarizer.
 
 ### Migration
 
@@ -54,6 +63,60 @@ while let Some(event) = stream.next().await {
 ### Notes
 - The `AgentEvent::Token` variant carries assistant text in both streaming and non-streaming modes. In streaming mode each `Token` is a single SSE delta; in non-streaming mode the full response text arrives as one `Token`.
 - `ToolCall` and `ToolResult` events are emitted in matching order (first call → first result).
+- `LlmSummarizer` errors (e.g. a transient API failure during summarization) are swallowed silently so an ongoing conversation is never aborted by a failed summary attempt.
+- `SlidingWindowSummarizer` takes a `window: usize` argument and never makes an API call.
+
+**Architecture**
+- `DeepseekConversation` renamed to `Conversation`. The `Conversation` trait has been removed — there is now a single concrete struct with all methods defined directly on it.
+- `DeepseekAgent` no longer holds a redundant `client` field; the single `ApiClient` lives inside `Conversation`.
+- `AgentStream` state machine simplified: the `YieldingToolCalls` and `YieldingToolResults` states now carry their own queues (`VecDeque`) instead of storing them as loose fields on the stream struct. This makes the state machine self-contained and eliminates implicit field–state coupling.
+- The `[auto-summary]` magic string is now centralised as `Message::AUTO_SUMMARY_TAG`, with `Message::is_auto_summary()` and `Message::auto_summary()` helpers. Custom `Summarizer` implementations should use these instead of comparing name strings directly.
+
+### Migration — Architecture
+
+Replace:
+```rust
+// old
+use ds_api::DeepseekConversation;
+let conv = DeepseekConversation::new(client);
+```
+with:
+```rust
+// new
+use ds_api::Conversation;
+let conv = Conversation::new(client);
+```
+
+### Migration — Summarizer
+
+Replace:
+```rust
+// old
+use ds_api::TokenBasedSummarizer;
+
+agent.with_summarizer(TokenBasedSummarizer {
+    threshold: 60_000,
+    retain_last: 10,
+    ..Default::default()
+})
+```
+with one of:
+```rust
+// new — semantic LLM summary (default)
+use ds_api::{ApiClient, LlmSummarizer};
+
+agent.with_summarizer(
+    LlmSummarizer::new(ApiClient::new(&token))
+        .token_threshold(60_000)
+        .retain_last(10),
+)
+```
+```rust
+// new — sliding window, no extra API calls
+use ds_api::SlidingWindowSummarizer;
+
+agent.with_summarizer(SlidingWindowSummarizer::new(20))
+```
 
 ## [0.3.2] - 2026-03-01
 

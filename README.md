@@ -64,7 +64,7 @@ No schema. No argument parsing. No loop. Just your function.
 
 ---
 
-## Killing Features
+## Key Features
 
 ### `#[tool]` — Zero-boilerplate tool registration
 
@@ -127,15 +127,31 @@ User prompt
 
 ### Context window management — automatic summarization
 
-Long conversations are compressed automatically. When the estimated token count exceeds the threshold, `ds_api` summarizes older messages into a single system note and keeps the most recent turns intact.
+Long conversations are compressed automatically. The default summarizer (`LlmSummarizer`) calls DeepSeek to write a concise semantic summary of older turns, replaces them with a single system message, and keeps the most recent turns verbatim. Your `with_system_prompt` messages are never touched.
 
 ```rust
-// Custom summarizer threshold and retention
-agent.with_summarizer(TokenBasedSummarizer {
-    threshold: 60_000,   // summarize when ~60k tokens estimated
-    retain_last: 12,     // always keep the 12 most recent messages
-    ..Default::default()
-})
+use ds_api::{LlmSummarizer, ApiClient};
+
+// Default: trigger at ~60 000 estimated tokens, retain last 10 turns.
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(LlmSummarizer::new(ApiClient::new(&token)));
+
+// Custom thresholds:
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(
+        LlmSummarizer::new(ApiClient::new(&token))
+            .token_threshold(40_000)
+            .retain_last(6),
+    );
+```
+
+If you prefer zero extra API calls, use `SlidingWindowSummarizer` instead — it keeps the last N turns and silently drops everything older:
+
+```rust
+use ds_api::SlidingWindowSummarizer;
+
+let agent = DeepseekAgent::new(&token)
+    .with_summarizer(SlidingWindowSummarizer::new(20));
 ```
 
 Your agent stays within context limits without you counting tokens.

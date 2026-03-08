@@ -73,12 +73,9 @@ pub mod error;
 pub mod raw; // raw types remain accessible via `ds_api::raw` but are not the primary public API
 pub mod tool_trait;
 
-// Legacy convenience chat modules `NormalChatter` and `SimpleChatter` were removed
-// during the refactor. Use the new `ApiRequest` / `ApiClient` /
-// `DeepseekConversation` / `DeepseekAgent` APIs instead.
 pub use agent::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
 pub use api::{ApiClient, ApiRequest};
-pub use conversation::DeepseekConversation;
+pub use conversation::{Conversation, LlmSummarizer, SlidingWindowSummarizer};
 pub use error::ApiError;
 pub use tool_trait::Tool;
 

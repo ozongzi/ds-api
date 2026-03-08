@@ -38,7 +38,7 @@ impl ApiClient {
             timeout: None,
         };
         // annotate the trace/span with a masked token indicator (presence only)
-        tracing::Span::current().record("masked_token", &"***");
+        tracing::Span::current().record("masked_token", "***");
         client
     }
 
