@@ -185,6 +185,35 @@
     border-bottom: none;
 }
 
+/* ─── Script preview (run_py / run_ts pending state) ─────────────────────── */
+
+.scriptPreview {
+    background: #f5f2ec;
+    border-top: 1px solid var(--border-subtle);
+    overflow: hidden;
+}
+
+/* Override prose margins inside the script preview — no extra padding needed */
+.scriptPreview .prose {
+    line-height: 1;
+}
+
+.scriptPreview .prose .code-block {
+    margin: 0;
+    border-radius: 0;
+    border: none;
+    font-size: 0.92em;
+}
+
+.scriptPreview .prose .code-header {
+    border-radius: 0;
+}
+
+.scriptPreview .prose .code-pre {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
 .toolHeader {
     display: flex;
     align-items: center;

@@ -1,9 +1,11 @@
-import { memo, useState, useCallback, useEffect, useRef } from "react";
+import { memo, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { DiffView } from "./DiffView";
 import { TerminalView } from "./TerminalView";
 import type { ChatBubble } from "../api/types";
 import styles from "./MessageBubble.module.css";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 interface Props {
   bubble: ChatBubble;
@@ -148,6 +150,44 @@ function ToolCallBubble({
       ? JSON.stringify(bubble.result, null, 2)
       : null;
 
+  // ── Extract script content from streaming argsRaw ─────────────────────────
+  // argsRaw is an incomplete JSON string like: {"script": "print('hello')\nimport
+  // We extract the value of the "script" key via regex and unescape it.
+  const streamingScript = useMemo(() => {
+    if (!bubble.pending) return null;
+    if (bubble.name !== "run_py" && bubble.name !== "run_ts") return null;
+    if (!bubble.argsRaw) return null;
+
+    // Match everything after "script": " up to the end of argsRaw,
+    // handling the case where the closing quote hasn't arrived yet.
+    const match = bubble.argsRaw.match(/"script"\s*:\s*"([\s\S]*)/);
+    if (!match) return null;
+
+    let raw = match[1];
+    // If the string is already closed (ends with unescaped "), strip it.
+    // Simple heuristic: strip trailing " that is not preceded by \.
+    raw = raw.replace(/"$/, "");
+
+    // Unescape JSON string escape sequences.
+    try {
+      return JSON.parse(`"${raw}"`);
+    } catch {
+      // Incomplete escape sequence at the end — strip the trailing backslash.
+      try {
+        return JSON.parse(`"${raw.replace(/\\$/, "")}"`);
+      } catch {
+        return raw;
+      }
+    }
+  }, [bubble.pending, bubble.name, bubble.argsRaw]);
+
+  const scriptLang =
+    bubble.name === "run_py"
+      ? "python"
+      : bubble.name === "run_ts"
+        ? "typescript"
+        : "";
+
   if (isInline) {
     return (
       <div className={styles.toolRow}>
@@ -195,8 +235,17 @@ function ToolCallBubble({
             />
           )}
 
-          {/* Streaming args while pending */}
-          {bubble.pending && argsStr && (
+          {/* Pending: script tools → syntax-highlighted source */}
+          {bubble.pending && streamingScript !== null && (
+            <div className={styles.scriptPreview}>
+              <MarkdownRenderer
+                content={`\`\`\`${scriptLang}\n${streamingScript}${argsStreaming ? "█" : ""}\n\`\`\``}
+              />
+            </div>
+          )}
+
+          {/* Pending: other inline tools (e.g. execute) → raw argsRaw */}
+          {bubble.pending && streamingScript === null && argsStr && (
             <div className={styles.toolSection}>
               <pre className={styles.toolCode}>
                 {argsStr}
