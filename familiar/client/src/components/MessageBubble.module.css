@@ -323,3 +323,203 @@
 .downloadBtn:active {
     transform: scale(0.95);
 }
+
+/* ─── File card (Claude-style) ───────────────────────────────────────────── */
+
+.fileCard {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: border-color var(--transition);
+}
+
+.fileCard:hover {
+    border-color: #3a3a52;
+}
+
+.fileCardPending {
+    opacity: 0.7;
+}
+
+.fileCardHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+}
+
+.fileCardLeft {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.fileCardIcon {
+    font-size: 1.5em;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.fileCardMeta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.fileCardName {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fileCardSize {
+    font-size: 0.78em;
+    color: var(--text-muted);
+}
+
+.fileCardPendingLabel {
+    font-size: 0.78em;
+    color: var(--text-muted);
+    animation: pulse 1.4s ease-in-out infinite;
+}
+
+.fileCardActions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.fileCardBtn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 11px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 0.82em;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+        background var(--transition),
+        color var(--transition),
+        border-color var(--transition);
+    white-space: nowrap;
+}
+
+.fileCardBtn:hover {
+    background: var(--bg-active);
+    color: var(--text-primary);
+    border-color: #3a3a52;
+}
+
+.fileCardBtnPrimary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #c4b5fd;
+}
+
+.fileCardBtnPrimary:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+/* ─── File preview area ──────────────────────────────────────────────────── */
+
+.filePreview {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.filePreviewLoading {
+    padding: 20px;
+    text-align: center;
+    font-size: 0.85em;
+    color: var(--text-muted);
+    animation: pulse 1.4s ease-in-out infinite;
+}
+
+.filePreviewBinary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 16px;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.filePreviewError {
+    padding: 14px 16px;
+    font-size: 0.84em;
+    color: var(--danger);
+}
+
+.filePreviewTruncated {
+    padding: 8px 16px;
+    font-size: 0.78em;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+    text-align: center;
+}
+
+/* ─── Code preview inside file card ─────────────────────────────────────── */
+
+.filePreviewCode {
+    background: #1a1a27;
+}
+
+.filePreviewCodeHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 14px;
+    background: #222233;
+    border-bottom: 1px solid #2d2d3d;
+    min-height: 32px;
+}
+
+.filePreviewLang {
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    color: #8b8baa;
+    letter-spacing: 0.03em;
+}
+
+.filePreviewLines {
+    font-size: 0.78em;
+    color: var(--text-muted);
+}
+
+.filePreviewPre {
+    margin: 0;
+    padding: 14px 16px;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 480px;
+    background: #1a1a27;
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    line-height: 1.65;
+}
+
+.filePreviewPre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #cdd6f4;
+    white-space: pre;
+    font-size: inherit;
+}

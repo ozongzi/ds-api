@@ -20,5 +20,14 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          hljs: ["highlight.js"],
+          "react-vendor": ["react", "react-dom"],
+          "marked-dompurify": ["marked", "dompurify"],
+        },
+      },
+    },
   },
 });

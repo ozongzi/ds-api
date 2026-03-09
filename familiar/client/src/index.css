@@ -210,33 +210,171 @@ textarea {
 }
 
 /* inline code */
-.prose code {
+.prose .inline-code,
+.prose code:not(pre code) {
     font-family: var(--font-mono);
     font-size: 0.875em;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    padding: 0.15em 0.4em;
-    border-radius: var(--radius-sm);
-    color: #8b3a1c;
+    background: rgba(110, 86, 207, 0.12);
+    border: 1px solid rgba(110, 86, 207, 0.25);
+    padding: 0.15em 0.42em;
+    border-radius: 4px;
+    color: #c4b5fd;
+    white-space: nowrap;
 }
 
-/* code blocks */
-.prose pre {
-    background: #2b2620;
-    border: 1px solid #3d3530;
+/* ─── Claude-style code block ────────────────────────────────────────────── */
+
+.prose .code-block {
+    margin: 0.9em 0;
     border-radius: var(--radius-md);
-    padding: 1em 1.2em;
-    overflow-x: auto;
-    margin: 0.8em 0;
+    overflow: hidden;
+    border: 1px solid #2d2d3d;
+    background: #1a1a27;
     font-size: 0.875em;
+}
+
+/* Header bar: language label + copy button */
+.prose .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 14px;
+    background: #222233;
+    border-bottom: 1px solid #2d2d3d;
+    min-height: 36px;
+    gap: 8px;
+}
+
+.prose .code-lang {
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    color: #8b8baa;
+    letter-spacing: 0.03em;
+    text-transform: lowercase;
+}
+
+/* Copy button */
+.prose .code-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    border: 1px solid #3a3a50;
+    background: transparent;
+    color: #8b8baa;
+    font-family: var(--font-sans);
+    font-size: 0.8em;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        color 120ms ease,
+        border-color 120ms ease;
+    white-space: nowrap;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.prose .code-copy-btn:hover {
+    background: #2d2d3d;
+    color: #c4b5fd;
+    border-color: #5a4fd0;
+}
+
+.prose .code-copy-btn.copied {
+    color: #4ade80;
+    border-color: #166534;
+    background: rgba(74, 222, 128, 0.08);
+}
+
+/* Code area */
+.prose .code-pre {
+    margin: 0;
+    padding: 14px 16px;
+    overflow-x: auto;
+    background: #1a1a27;
     line-height: 1.65;
 }
-.prose pre code {
+
+.prose .code-pre code {
+    font-family: var(--font-mono);
+    font-size: inherit;
     background: none;
     border: none;
     padding: 0;
-    color: #e8ddd4;
-    font-size: inherit;
+    color: #cdd6f4;
+    white-space: pre;
+}
+
+/* ─── Highlight.js token colors (Catppuccin-ish dark) ────────────────────── */
+
+.hljs-comment,
+.hljs-quote {
+    color: #6c7086;
+    font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+    color: #cba6f7;
+}
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-attribute,
+.hljs-literal,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type {
+    color: #a6e3a1;
+}
+.hljs-number,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-variable,
+.hljs-deletion {
+    color: #fab387;
+}
+.hljs-function,
+.hljs-title.function_,
+.hljs-selector-id,
+.hljs-selector-class {
+    color: #89dceb;
+}
+.hljs-meta,
+.hljs-meta .hljs-string {
+    color: #f9e2af;
+}
+.hljs-operator,
+.hljs-punctuation {
+    color: #89b4fa;
+}
+.hljs-params {
+    color: #cdd6f4;
+}
+.hljs-attr,
+.hljs-property {
+    color: #89b4fa;
+}
+.hljs-class .hljs-title,
+.hljs-title.class_ {
+    color: #f38ba8;
+}
+.hljs-emphasis {
+    font-style: italic;
+}
+.hljs-strong {
+    font-weight: bold;
+}
+.hljs-addition {
+    color: #a6e3a1;
+    background: rgba(166, 227, 161, 0.08);
+}
+.hljs-deletion {
+    color: #f38ba8;
+    background: rgba(243, 139, 168, 0.08);
 }
 
 /* ─── Utility ────────────────────────────────────────────────────────────── */

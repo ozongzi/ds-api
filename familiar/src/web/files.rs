@@ -1,4 +1,5 @@
 use axum::{
+    Json,
     extract::{Query, State},
     http::header,
     response::{IntoResponse, Response},
@@ -7,7 +8,7 @@ use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use tokio::io::AsyncReadExt;
 
@@ -100,6 +101,131 @@ pub async fn download_file(
         .into_response();
 
     Ok(response)
+}
+
+// ─── Preview endpoint ─────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct PreviewResponse {
+    filename: String,
+    path: String,
+    lang: String,
+    line_count: usize,
+    content: String,
+    truncated: bool,
+}
+
+pub async fn preview_file(
+    State(state): State<AppState>,
+    bearer: Option<TypedHeader<Authorization<Bearer>>>,
+    Query(q): Query<FileQuery>,
+) -> Result<Json<PreviewResponse>, AppError> {
+    let token = bearer
+        .as_ref()
+        .map(|TypedHeader(Authorization(b))| b.token().to_string())
+        .or_else(|| q.token.clone())
+        .ok_or_else(AppError::unauthorized)?;
+
+    sqlx::query("SELECT user_id FROM sessions WHERE token = $1")
+        .bind(&token)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("file preview auth query: {e}");
+            AppError::internal("数据库错误")
+        })?
+        .ok_or_else(AppError::unauthorized)?;
+
+    let path = std::path::PathBuf::from(&q.path);
+
+    let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found("文件不存在")
+        } else {
+            AppError::internal(&e.to_string())
+        }
+    })?;
+
+    if !metadata.is_file() {
+        return Err(AppError::bad_request("路径不是一个文件"));
+    }
+
+    const MAX_PREVIEW: usize = 100 * 1024; // 100 KB
+
+    let raw = tokio::fs::read(&path)
+        .await
+        .map_err(|e| AppError::internal(&e.to_string()))?;
+
+    // Reject binary files: check for null bytes in first 8KB.
+    let probe = &raw[..raw.len().min(8192)];
+    if probe.contains(&0u8) {
+        return Err(AppError::bad_request("二进制文件无法预览"));
+    }
+
+    let truncated = raw.len() > MAX_PREVIEW;
+    let slice = &raw[..raw.len().min(MAX_PREVIEW)];
+    let content = String::from_utf8_lossy(slice).into_owned();
+
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+
+    let lang = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| ext_to_lang(e).to_string())
+        .unwrap_or_default();
+
+    let line_count = content.lines().count();
+
+    Ok(Json(PreviewResponse {
+        filename,
+        path: q.path.clone(),
+        lang,
+        line_count,
+        content,
+        truncated,
+    }))
+}
+
+fn ext_to_lang(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "rs" => "rust",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "mts" | "cts" => "typescript",
+        "tsx" => "tsx",
+        "jsx" => "jsx",
+        "py" => "python",
+        "sh" | "bash" | "zsh" => "bash",
+        "fish" => "fish",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "json" => "json",
+        "md" | "markdown" => "markdown",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" | "sass" => "scss",
+        "sql" => "sql",
+        "c" => "c",
+        "cpp" | "cc" | "cxx" => "cpp",
+        "h" | "hpp" => "cpp",
+        "go" => "go",
+        "java" => "java",
+        "kt" | "kts" => "kotlin",
+        "swift" => "swift",
+        "rb" => "ruby",
+        "php" => "php",
+        "lua" => "lua",
+        "r" => "r",
+        "dockerfile" => "dockerfile",
+        "makefile" | "mk" => "makefile",
+        "xml" | "svg" => "xml",
+        "ini" | "cfg" | "conf" => "ini",
+        "env" => "bash",
+        _ => "",
+    }
 }
 
 fn mime_from_filename(name: &str) -> &'static str {
