@@ -1,232 +1,274 @@
 # familiar
 
-A personal AI agent that runs on your Linux server and lets you chat from your iPhone via Telegram.
+A personal AI agent that runs on your Linux server. Chat from any browser — on your phone or desktop.
 
-Built on [`ds-api`](../ds-api) — your Rust functions become AI tools with zero boilerplate.
+Built on [`ds-api`](../ds-api) — Rust functions become AI tools with zero boilerplate.
+
+---
+
+## What it does
+
+- Full-featured web UI (React + Vite) with real-time streaming
+- Tool calls rendered live as they happen — arguments stream in token by token
+- File editing tools with inline diff view
+- Script execution with syntax-highlighted preview
+- Per-conversation persistent history with semantic + full-text search
+- Generation survives browser refresh — reconnect and replay seamlessly
+- Interrupt or abort mid-generation from the UI
 
 ---
 
 ## Architecture
 
 ```
-iPhone (Telegram app)
+Browser (any device)
   │
-  │  HTTPS
+  │  HTTPS / WSS
   ▼
-Telegram Bot API
-  │
-  │  POST /webhook  (your server must be reachable over HTTPS)
-  ▼
-familiar (axum)
-  │
-  ├─ per-chat DeepseekAgent (conversation history preserved)
-  └─ tools registered via #[tool]
+nginx  ──────────────────────────────────────────┐
+  │  /api/*  /ws/*  → :3000                      │
+  │  /       → /srv/familiar/client/dist (static) │
+  └─────────────────────────────────────────────┘
+                    │
+                    ▼
+           familiar (axum, :3000)
+                    │
+         ┌──────────┴──────────┐
+         │                     │
+   REST /api/*           WebSocket /ws/:id
+   (auth, files,         (streaming generation,
+    history)              tool events, interrupt/abort)
+                               │
+                        DeepseekAgent (ds-api)
+                               │
+                    ┌──────────┼──────────┐
+                 FileTool  ScriptTool  CommandTool
+                 HistoryTool  PresentFileTool
 ```
 
-Each Telegram chat gets its own `DeepseekAgent` instance with persistent conversation history. Send a message → agent replies. If you send a second message while the agent is still running tools, it is injected mid-loop via the interrupt channel and picked up before the next API turn.
+Each conversation runs a background generation task on the server. Clients subscribe via WebSocket and receive a replay of buffered events on reconnect — the agent keeps running even if you close the tab.
+
+---
+
+## Tools
+
+### `execute`
+Run a shell command via `sh -c`.
+- `command` — the command to run
+- `cwd` *(optional)* — working directory
+
+### `run_py`
+Run a Python script with `uv run`. Supports [PEP 723 inline metadata](https://peps.python.org/pep-0723/) for declaring dependencies:
+```python
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["requests", "rich>=13"]
+# ///
+```
+
+### `run_ts`
+Run a TypeScript script with Bun. Import any npm package directly — Bun installs it automatically:
+```ts
+import { format } from "date-fns";
+```
+
+### `write`
+Overwrite a file with new content. Parent directories are created automatically.
+- `path`, `content`
+
+### `str_replace`
+Replace a unique text fragment in a file. Returns the surrounding context lines on success so the model can verify the change without an extra `get` call.
+- `path`, `old_str`, `new_str`
+- `old_str` must match exactly once — ambiguous matches are rejected with a helpful error.
+
+### `get`
+Read file content. Line numbers are **1-based**.
+- `path`
+- `from` *(optional)* — start line (default: 1)
+- `to` *(optional)* — end line (default: last line)
+
+### `patch`
+Replace a line range with new content (1-based, both ends inclusive).
+- `path`, `from`, `to`, `new_content`
+- Use `str_replace` for most edits — `patch` requires exact line numbers.
+
+### `get_file_info`
+Returns file size and total line count. Call this before `get` on large files.
+
+### `list_dir`
+List a directory. Returns structured entries (dirs first, then files with sizes).
+
+### `read_binary`
+Read a binary file in xxd-style hex+ASCII format.
+- `path`, `begin`, `end` (byte offsets)
+
+### `present_file`
+Expose a file to the user as a downloadable card in the UI. Supports inline preview for text files.
+
+### `search_history_fts`
+Full-text search over conversation history (PostgreSQL FTS).
+- `query`, `limit` *(optional, default 10)*
+
+### `search_history_semantic`
+Semantic search over conversation history using vector embeddings.
+- `query`, `limit` *(optional, default 5)*
 
 ---
 
 ## Prerequisites
 
-- Rust toolchain (`cargo`)
-- A server reachable over HTTPS (required by Telegram for webhooks)
-  - Use a reverse proxy (nginx / caddy) with a TLS certificate, or
-  - Use a service like [ngrok](https://ngrok.com) for local development
-- A Telegram bot token from [@BotFather](https://t.me/BotFather)
+- Rust toolchain (`cargo`) with `x86_64-unknown-linux-musl` target for cross-compilation
+- Node.js / Bun for building the frontend
+- A Linux server with:
+  - PostgreSQL (with `pgvector` extension)
+  - nginx
+  - A TLS certificate (Certbot recommended)
 - A DeepSeek API key from [platform.deepseek.com](https://platform.deepseek.com)
+- An embedding API endpoint (for semantic history search)
 
 ---
 
-## Quick start
+## Environment variables
 
-### 1. Configure
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-TELEGRAM_TOKEN=123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Optional
-PORT=8080
-SYSTEM_PROMPT=You are a helpful personal assistant.
-WEBHOOK_SECRET=<output of: openssl rand -hex 32>
-```
-
-### 2. Build
-
-```bash
-# From the workspace root
-cargo build --release -p familiar
-```
-
-The binary is at `target/release/familiar`.
-
-### 3. Register the Telegram webhook
-
-Run this once after your server is reachable over HTTPS.  Replace the placeholders with your values:
-
-```bash
-curl -X POST "https://api.telegram.org/bot<TELEGRAM_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://<YOUR_DOMAIN>/webhook",
-    "secret_token": "<WEBHOOK_SECRET>"
-  }'
-```
-
-Telegram will confirm with `{"ok":true,"result":true,"description":"Webhook was set"}`.
-
-To verify it worked:
-
-```bash
-curl "https://api.telegram.org/bot<TELEGRAM_TOKEN>/getWebhookInfo"
-```
-
-### 4. Run
-
-```bash
-./target/release/familiar
-```
-
-Or with environment variables inline:
-
-```bash
-TELEGRAM_TOKEN=... DEEPSEEK_API_KEY=... ./target/release/familiar
-```
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
+| `DEEPSEEK_API_KEY` | ✅ | — | DeepSeek API key |
+| `JWT_SECRET` | ✅ | — | Secret for signing auth tokens |
+| `EMBED_URL` | ✅ | — | Embedding API base URL |
+| `EMBED_API_KEY` | ✅ | — | Embedding API key |
+| `PORT` | — | `3000` | Port the server listens on |
+| `SYSTEM_PROMPT` | — | — | System prompt prepended to every conversation |
+| `RUST_LOG` | — | `info` | Log level |
 
 ---
 
-## Deployment on Linux (systemd)
+## Build & deploy
 
-### 1. Copy the binary
+A `Makefile` at the workspace root handles everything:
 
 ```bash
-sudo cp target/release/familiar /usr/local/bin/familiar
-sudo chmod +x /usr/local/bin/familiar
+# Full build (frontend + cross-compiled backend) and deploy to server
+make deploy
+
+# Build backend only (cross-compiled musl binary for Linux)
+make build
+
+# Build frontend only
+make build-client
+
+# Local dev
+make dev-server   # backend on :3000
+make dev-client   # Vite dev server with proxy
 ```
 
-### 2. Create the environment file
+`make deploy` does:
+1. Builds the frontend (`bun run build`)
+2. Cross-compiles the backend (`x86_64-unknown-linux-musl`)
+3. `scp`s the binary to `/usr/local/bin/familiar`
+4. `rsync`s `dist/` to `/srv/familiar/client/dist/`
+5. Restarts the `familiar` systemd service
+
+### First-time server setup
+
+**1. PostgreSQL**
+
+```bash
+sudo -u postgres psql -c "CREATE USER familiar WITH PASSWORD 'yourpassword';"
+sudo -u postgres psql -c "CREATE DATABASE familiar OWNER familiar;"
+sudo -u postgres psql -d familiar -c "CREATE EXTENSION vector;"
+```
+
+**2. Environment file**
 
 ```bash
 sudo mkdir -p /etc/familiar
-sudo cp .env.example /etc/familiar/.env
-sudo nano /etc/familiar/.env   # fill in your values
+sudo nano /etc/familiar/.env   # fill in the variables above
 sudo chmod 600 /etc/familiar/.env
 ```
 
-### 3. Create the systemd unit
-
-```bash
-sudo nano /etc/systemd/system/familiar.service
-```
+**3. Systemd unit**
 
 ```ini
 [Unit]
-Description=Personal AI agent server
-After=network.target
+Description=Familiar — personal AI agent
+After=network.target postgresql.service
+Requires=postgresql.service
 
 [Service]
 Type=simple
-User=agent
+WorkingDirectory=/srv/familiar
 EnvironmentFile=/etc/familiar/.env
+Environment=RUST_LOG=info
 ExecStart=/usr/local/bin/familiar
 Restart=on-failure
 RestartSec=5
-; Log level — set to debug for troubleshooting
-Environment=RUST_LOG=info
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### 4. Enable and start
-
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable familiar
 sudo systemctl start familiar
-sudo systemctl status familiar
 ```
 
-### 5. View logs
+**4. nginx**
+
+```nginx
+server {
+    server_name familiar.yourdomain.com;
+
+    location / {
+        root /srv/familiar/client/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+    }
+
+    location /ws/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+
+    listen 443 ssl;
+    ssl_certificate     /etc/letsencrypt/live/familiar.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/familiar.yourdomain.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = familiar.yourdomain.com) {
+        return 301 https://$host$request_uri;
+    }
+    listen 80;
+    server_name familiar.yourdomain.com;
+    return 404;
+}
+```
+
+Get a TLS certificate:
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d familiar.yourdomain.com
+```
+
+---
+
+## Logs
 
 ```bash
 journalctl -u familiar -f
 ```
-
----
-
-## Reverse proxy (nginx)
-
-Telegram requires HTTPS.  A minimal nginx config that terminates TLS and forwards to the agent server:
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name your.domain.com;
-
-    ssl_certificate     /etc/letsencrypt/live/your.domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your.domain.com/privkey.pem;
-
-    location /webhook {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-```
-
-Get a free TLS certificate with [Certbot](https://certbot.eff.org):
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your.domain.com
-```
-
----
-
-## Local development with ngrok
-
-If you don't have a domain yet, ngrok creates a temporary public HTTPS URL that tunnels to your local machine:
-
-```bash
-# Install ngrok, then:
-ngrok http 8080
-```
-
-ngrok prints a URL like `https://abc123.ngrok.io`. Use that as your webhook URL:
-
-```bash
-curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-  -d "url=https://abc123.ngrok.io/webhook"
-```
-
-Re-register the webhook each time ngrok restarts (the URL changes).
-
----
-
-## Environment variables reference
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `TELEGRAM_TOKEN` | ✅ | — | Bot token from @BotFather |
-| `DEEPSEEK_API_KEY` | ✅ | — | DeepSeek API key |
-| `PORT` | — | `8080` | Port the HTTP server listens on |
-| `SYSTEM_PROMPT` | — | — | System prompt prepended to every conversation |
-| `WEBHOOK_SECRET` | — | — | Secret token for webhook verification (recommended) |
-| `RUST_LOG` | — | `info` | Log level (`error`, `warn`, `info`, `debug`, `trace`) |
-
----
-
-## Concurrency model
-
-Each Telegram chat has one `DeepseekAgent` stored in a `Mutex<HashMap<chat_id, ChatEntry>>`. The agent is `take()`-n out of the map for the duration of a turn, so the lock is never held across an `.await`. Concurrent messages from the same chat are handled gracefully:
-
-- If the agent is free, a new turn starts immediately.
-- If the agent is busy (running tools), the new message is injected via the interrupt channel and picked up before the next API call — the user doesn't need to wait.
