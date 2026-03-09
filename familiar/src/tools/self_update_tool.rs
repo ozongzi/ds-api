@@ -33,35 +33,48 @@ impl Tool for SelfUpdateTool {
             return build;
         }
 
-        // 2. stop service, copy binary, start service
-        let steps: &[(&str, &[&str])] = &[
-            ("systemctl", &["stop", "familiar"]),
-            (
-                "cp",
-                &["/root/target/release/familiar", "/usr/local/bin/familiar"],
-            ),
-            ("systemctl", &["start", "familiar"]),
-        ];
-
-        for (cmd, args) in steps {
-            let out = Command::new(cmd).args(*args).output().await;
-            match out {
-                Ok(o) if !o.status.success() => {
-                    return json!({
-                        "success": false,
-                        "step": cmd,
-                        "stderr": String::from_utf8_lossy(&o.stderr).to_string(),
-                        "exit_code": o.status.code(),
-                    });
-                }
-                Err(e) => {
-                    return json!({ "success": false, "step": cmd, "error": e.to_string() });
-                }
-                _ => {}
-            }
+        // 2. Write a small deploy script and launch it in the background via nohup.
+        //    The script sleeps briefly so familiar can finish responding to this
+        //    tool call before being stopped — otherwise systemctl stop would kill
+        //    us mid-execution and steps 3/4 would never run.
+        let script = "\
+#!/bin/sh
+sleep 3
+systemctl stop familiar
+cp /root/target/release/familiar /usr/local/bin/familiar
+systemctl start familiar
+";
+        let script_path = "/tmp/familiar_deploy.sh";
+        if let Err(e) = tokio::fs::write(script_path, script).await {
+            return json!({ "success": false, "error": format!("failed to write deploy script: {e}") });
         }
 
-        json!({ "success": true, "message": "deployed and restarted" })
+        // Make executable.
+        let chmod = Command::new("chmod")
+            .args(["+x", script_path])
+            .output()
+            .await;
+        if let Err(e) = chmod {
+            return json!({ "success": false, "error": format!("chmod failed: {e}") });
+        }
+
+        // Spawn detached — familiar will be gone before this script finishes,
+        // so we must not wait for it.
+        let spawn = Command::new("nohup")
+            .args([script_path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        match spawn {
+            Ok(_) => json!({
+                "success": true,
+                "message": "build succeeded — deploying in background, service will restart in ~5s and WebSocket will reconnect automatically",
+            }),
+            Err(e) => {
+                json!({ "success": false, "error": format!("failed to spawn deploy script: {e}") })
+            }
+        }
     }
 
     /// 读取 familiar 当前运行的 systemd 服务日志（最近 N 行）。
