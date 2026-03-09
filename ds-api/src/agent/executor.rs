@@ -245,6 +245,14 @@ pub(crate) async fn execute_tools(
         });
     }
 
+    // Drain any user messages that arrived while tools were executing and
+    // append them to the history so the model sees them on the next turn.
+    if let Some(rx) = agent.interrupt_rx.as_mut() {
+        while let Ok(msg) = rx.try_recv() {
+            agent.conversation.history_mut().push(Message::user(&msg));
+        }
+    }
+
     (ToolsResult { results }, agent)
 }
 

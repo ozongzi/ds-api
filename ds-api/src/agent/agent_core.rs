@@ -5,6 +5,7 @@ use crate::conversation::{Conversation, LlmSummarizer, Summarizer};
 use crate::raw::request::message::{Message, Role};
 use crate::tool_trait::Tool;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 /// Information about a tool call requested by the model.
 ///
@@ -79,6 +80,11 @@ pub struct DeepseekAgent {
     pub(crate) streaming: bool,
     /// The model to use for every API turn.  Defaults to `"deepseek-chat"`.
     pub(crate) model: String,
+    /// Optional channel for injecting user messages mid-loop.
+    /// Messages received here are drained after each tool-execution round and
+    /// appended to the conversation history as `Role::User` messages before the
+    /// next API turn begins.
+    pub(crate) interrupt_rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 impl DeepseekAgent {
@@ -91,6 +97,7 @@ impl DeepseekAgent {
             tool_index: HashMap::new(),
             streaming: false,
             model,
+            interrupt_rx: None,
         }
     }
 
@@ -160,5 +167,54 @@ impl DeepseekAgent {
     pub fn with_summarizer(mut self, summarizer: impl Summarizer + 'static) -> Self {
         self.conversation = self.conversation.with_summarizer(summarizer);
         self
+    }
+
+    /// Read-only view of the current conversation history.
+    ///
+    /// Returns all messages in order, including system prompts, user turns,
+    /// assistant replies, tool calls, and tool results.  Auto-summary messages
+    /// inserted by the built-in summarizers are also included.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ds_api::DeepseekAgent;
+    ///
+    /// # #[tokio::main] async fn main() {
+    /// let agent = DeepseekAgent::new("sk-...");
+    /// for msg in agent.history() {
+    ///     println!("{:?}: {:?}", msg.role, msg.content);
+    /// }
+    /// # }
+    /// ```
+    pub fn history(&self) -> &[crate::raw::request::message::Message] {
+        self.conversation.history()
+    }
+
+    /// Attach an interrupt channel to the agent (builder-style).
+    ///
+    /// Returns the agent and the sender half of the channel.  Send any `String`
+    /// through the `UnboundedSender` at any time; the message will be picked up
+    /// after the current tool-execution round finishes and inserted into the
+    /// conversation history as a `Role::User` message before the next API turn.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ds_api::DeepseekAgent;
+    /// use tokio::sync::mpsc;
+    ///
+    /// # #[tokio::main] async fn main() {
+    /// let (agent, tx) = DeepseekAgent::new("sk-...")
+    ///     .with_interrupt_channel();
+    ///
+    /// // In another task or callback:
+    /// tx.send("Actually, use Python instead.".into()).unwrap();
+    /// # }
+    /// ```
+    pub fn with_interrupt_channel(mut self) -> (Self, mpsc::UnboundedSender<String>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.interrupt_rx = Some(rx);
+        (self, tx)
     }
 }

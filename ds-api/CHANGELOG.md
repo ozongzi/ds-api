@@ -2,6 +2,77 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3] - 2026-03-11
+
+### Summary
+Mid-loop user message injection via an interrupt channel. No breaking changes — all existing `0.5.x` code continues to compile unchanged.
+
+### New features
+
+**`DeepseekAgent::with_interrupt_channel()`**
+- New builder method that attaches an `UnboundedSender<String>` to the agent.
+- Returns `(DeepseekAgent, InterruptSender)` — the agent and the sender half of the channel.
+- Any message sent through the `InterruptSender` is picked up automatically after the current tool-execution round finishes and appended to the conversation history as a `Role::User` message before the next API turn.
+- The sender can be cloned freely and used from any task or callback (e.g. a Telegram bot handler) without blocking.
+- If the agent is idle (not in a tool loop), messages accumulate in the channel and are drained on the next tool round.
+- Agents without an interrupt channel (the default) are unaffected — no overhead.
+
+```rust
+let (agent, tx) = DeepseekAgent::new(token)
+    .with_streaming()
+    .add_tool(MyTool)
+    .with_interrupt_channel();
+
+// In another task — fires while the agent is executing tools:
+tx.send("Actually, use Python instead.".into()).unwrap();
+```
+
+Timing — message is injected between tool round and next API turn:
+```
+User prompt
+  → API call → ToolCall(search)
+  → tool executing…  ← tx.send("change of plan") arrives here
+  → ToolResult(search)
+  → drain channel → push User("change of plan") into history
+  → API call (model now sees the injected message)
+  → Token("Sure, pivoting to…")
+```
+
+**`DeepseekAgent::history()`**
+- New public read-only accessor returning `&[Message]` — the full conversation history in order.
+- Includes system prompts, user turns, assistant replies, tool calls, tool results, and any auto-summary messages.
+- Previously the `conversation` field was `pub(crate)` and inaccessible from application code.
+
+```rust
+for msg in agent.history() {
+    println!("{:?}: {:?}", msg.role, msg.content);
+}
+```
+
+**`InterruptSender` type alias**
+- `ds_api::InterruptSender` is a re-export of `tokio::sync::mpsc::UnboundedSender<String>`.
+- Import it directly instead of spelling out the full `tokio` path.
+
+### New example
+
+**`examples/interrupt.rs`**
+- Demonstrates `with_interrupt_channel()` end-to-end.
+- A `SlowCounter` tool counts to 5 with a 200 ms delay per step (~1 s total).
+- A background task injects a follow-up message at 500 ms (mid-tool-execution).
+- After the tool round finishes, the agent incorporates the injected message into its next reply.
+- Shows `stream.into_agent()` recovery and `agent.history()` inspection.
+
+Run with:
+```bash
+DEEPSEEK_API_KEY=sk-... cargo run --example interrupt
+```
+
+### Notes
+- All tests pass.
+- No breaking changes — `0.5.2` consumers require no code changes.
+
+---
+
 ## [0.5.2] - 2026-03-10
 
 ### Summary
