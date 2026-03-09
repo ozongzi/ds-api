@@ -148,22 +148,57 @@ export function useChat(conversationId: string | null, token: string | null) {
                 : b,
             ),
           );
-        } else if (event.type === "tool_call") {
-          // Seal whatever text came before this tool call.
+        } else if (event.type === "tool_call_start") {
+          // Streaming: tool name is known, args not yet arrived.
           sealActiveText();
-
           const toolBubble: ToolBubble = {
             kind: "tool",
             key: `tool-${event.id}`,
             role: "tool",
             name: event.name,
-            args: event.args,
+            args: null,
+            argsRaw: "",
             result: null,
             pending: true,
           };
           setBubbles((prev) => [...prev, toolBubble]);
-
-          // The next tokens after the tool result will open a fresh text segment.
+        } else if (event.type === "tool_call_args_delta") {
+          // Streaming: append raw args fragment to the existing bubble.
+          setBubbles((prev) =>
+            prev.map((b) =>
+              b.key === `tool-${event.id}` && b.kind === "tool"
+                ? { ...b, argsRaw: b.argsRaw + event.delta }
+                : b,
+            ),
+          );
+        } else if (event.type === "tool_call") {
+          // Final event: full parsed args arrive (or first event in non-streaming).
+          // If tool_call_start already created the bubble, update args in place.
+          // If not (non-streaming path), create the bubble now.
+          sealActiveText();
+          setBubbles((prev) => {
+            const exists = prev.some(
+              (b) => b.key === `tool-${event.id}` && b.kind === "tool",
+            );
+            if (exists) {
+              return prev.map((b) =>
+                b.key === `tool-${event.id}` && b.kind === "tool"
+                  ? { ...b, args: event.args }
+                  : b,
+              );
+            }
+            const toolBubble: ToolBubble = {
+              kind: "tool",
+              key: `tool-${event.id}`,
+              role: "tool",
+              name: event.name,
+              args: event.args,
+              argsRaw: "",
+              result: null,
+              pending: true,
+            };
+            return [...prev, toolBubble];
+          });
         } else if (event.type === "tool_result") {
           setBubbles((prev) =>
             prev.map((b) =>

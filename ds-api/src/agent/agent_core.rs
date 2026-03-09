@@ -36,13 +36,30 @@ pub struct ToolCallResult {
 /// - `Token(String)` — a text fragment from the assistant.  In streaming mode each
 ///   `Token` is a single SSE delta; in non-streaming mode the full response text
 ///   arrives as one `Token`.
-/// - `ToolCall(ToolCallInfo)` — the model has requested a tool invocation.  One event
-///   is emitted per call, before execution begins.
+/// - `ToolCallStart { id, name }` — emitted the moment a tool call's name is known
+///   during streaming, before any arguments have arrived.  Allows UIs to show the
+///   tool name immediately.  Only emitted in streaming mode.
+/// - `ToolCallArgsDelta { id, delta }` — an incremental fragment of the tool call's
+///   JSON arguments, emitted once per SSE chunk during streaming.  Accumulate these
+///   to reconstruct the full arguments string.  Only emitted in streaming mode.
+/// - `ToolCall(ToolCallInfo)` — the model has requested a tool invocation, emitted
+///   once the full arguments are assembled (end of stream).  In non-streaming mode
+///   this is the only tool-call event.  Execution begins after this event.
 /// - `ToolResult(ToolCallResult)` — a tool has finished executing.  One event is
 ///   emitted per call, in the same order as the corresponding `ToolCall` events.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Token(String),
+    /// Emitted in streaming mode the instant a tool call's id+name are known.
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    /// Emitted in streaming mode for each incremental fragment of the arguments JSON.
+    ToolCallArgsDelta {
+        id: String,
+        delta: String,
+    },
     ToolCall(ToolCallInfo),
     ToolResult(ToolCallResult),
 }

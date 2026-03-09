@@ -64,6 +64,16 @@ pub(crate) struct StreamingData {
     pub(crate) tool_call_bufs: Vec<Option<PartialToolCall>>,
 }
 
+/// An incremental streaming event produced by [`apply_chunk_delta`].
+pub(crate) enum ChunkEvent {
+    /// A text fragment from the assistant.
+    Token(String),
+    /// A tool call's id and name became known for the first time.
+    ToolCallStart { id: String, name: String },
+    /// An incremental fragment of a tool call's arguments JSON.
+    ToolCallArgsDelta { id: String, delta: String },
+}
+
 // ── Type aliases for futures returned by this module ─────────────────────────
 
 /// Future produced by [`fetch_response`].
@@ -297,16 +307,21 @@ pub(crate) fn finalize_stream(data: &mut StreamingData) -> Vec<ToolCall> {
 
 /// Apply a single SSE chunk delta to the [`StreamingData`] accumulator.
 ///
-/// Returns any text fragment that should be yielded as an [`AgentEvent::Token`],
-/// or `None` if the chunk carried only tool-call delta or was empty.
+/// Returns a list of zero or more [`ChunkEvent`]s to be yielded to the caller.
+/// In practice at most one event is returned per chunk, but the vec keeps the
+/// API uniform across all cases.
 pub(crate) fn apply_chunk_delta(
     data: &mut StreamingData,
     chunk: crate::raw::ChatCompletionChunk,
-) -> Option<String> {
-    let choice = chunk.choices.into_iter().next()?;
+) -> Vec<ChunkEvent> {
+    let choice = match chunk.choices.into_iter().next() {
+        Some(c) => c,
+        None => return vec![],
+    };
     let delta = choice.delta;
 
     if let Some(dtcs) = delta.tool_calls {
+        let mut events = Vec::new();
         for dtc in dtcs {
             let idx = dtc.index as usize;
             if data.tool_call_bufs.len() <= idx {
@@ -314,13 +329,20 @@ pub(crate) fn apply_chunk_delta(
             }
             let entry = &mut data.tool_call_bufs[idx];
             if entry.is_none() {
+                // First chunk for this tool call — name and id arrive here.
+                let id = dtc.id.clone().unwrap_or_default();
+                let name = dtc
+                    .function
+                    .as_ref()
+                    .and_then(|f| f.name.clone())
+                    .unwrap_or_default();
+                events.push(ChunkEvent::ToolCallStart {
+                    id: id.clone(),
+                    name: name.clone(),
+                });
                 *entry = Some(PartialToolCall {
-                    id: dtc.id.clone().unwrap_or_default(),
-                    name: dtc
-                        .function
-                        .as_ref()
-                        .and_then(|f| f.name.clone())
-                        .unwrap_or_default(),
+                    id,
+                    name,
                     arguments: String::new(),
                 });
             }
@@ -332,19 +354,25 @@ pub(crate) fn apply_chunk_delta(
                 }
                 if let Some(func) = dtc.function
                     && let Some(args) = func.arguments
+                    && !args.is_empty()
                 {
                     partial.arguments.push_str(&args);
+                    events.push(ChunkEvent::ToolCallArgsDelta {
+                        id: partial.id.clone(),
+                        delta: args,
+                    });
                 }
             }
         }
+        return events;
     }
 
     if let Some(content) = delta.content
         && !content.is_empty()
     {
         data.content_buf.push_str(&content);
-        return Some(content);
+        return vec![ChunkEvent::Token(content)];
     }
 
-    None
+    vec![]
 }

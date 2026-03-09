@@ -75,6 +75,13 @@ function ToolCallBubble({
   bubble: Extract<ChatBubble, { kind: "tool" }>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const autoExpandedRef = useRef(false);
+
+  // Auto-expand the first time args start streaming in.
+  if (!autoExpandedRef.current && bubble.argsRaw.length > 0 && !expanded) {
+    autoExpandedRef.current = true;
+    setExpanded(true);
+  }
 
   // Detect present_file result
   const fileResult =
@@ -95,7 +102,12 @@ function ToolCallBubble({
   }
 
   // Otherwise render generic tool call
-  const argsStr = bubble.args ? JSON.stringify(bubble.args, null, 2) : "";
+  // During streaming: args is null but argsRaw accumulates character by character.
+  // After tool_call final event: args is set (parsed JSON), argsRaw is the raw string.
+  const argsStr = bubble.args
+    ? JSON.stringify(bubble.args, null, 2)
+    : bubble.argsRaw || "";
+  const argsStreaming = !bubble.args && bubble.argsRaw.length > 0;
   const resultStr =
     bubble.result && !fileResult
       ? JSON.stringify(bubble.result, null, 2)
@@ -126,7 +138,12 @@ function ToolCallBubble({
             {argsStr && (
               <div className={styles.toolSection}>
                 <p className={styles.toolSectionLabel}>参数</p>
-                <pre className={styles.toolCode}>{argsStr}</pre>
+                <pre className={styles.toolCode}>
+                  {argsStr}
+                  {argsStreaming && (
+                    <span className={styles.cursor} aria-hidden="true" />
+                  )}
+                </pre>
               </div>
             )}
             {resultStr !== null && (

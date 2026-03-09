@@ -25,9 +25,9 @@ use std::task::{Context, Poll};
 use futures::{Stream, StreamExt};
 
 use super::executor::{
-    ConnectFuture, ExecFuture, FetchFuture, StreamingData, SummarizeFuture, apply_chunk_delta,
-    connect_stream, execute_tools, fetch_response, finalize_stream, raw_to_tool_call_info,
-    run_summarize,
+    ChunkEvent, ConnectFuture, ExecFuture, FetchFuture, StreamingData, SummarizeFuture,
+    apply_chunk_delta, connect_stream, execute_tools, fetch_response, finalize_stream,
+    raw_to_tool_call_info, run_summarize,
 };
 use crate::agent::agent_core::{AgentEvent, DeepseekAgent, ToolCallResult};
 use crate::error::ApiError;
@@ -146,10 +146,21 @@ impl Stream for AgentStream {
                     }
 
                     Poll::Ready(Some(Ok(chunk))) => {
-                        let fragment = apply_chunk_delta(&mut data, chunk);
+                        let mut events = apply_chunk_delta(&mut data, chunk);
                         this.state = AgentStreamState::StreamingChunks(data);
-                        if let Some(text) = fragment {
-                            return Poll::Ready(Some(Ok(AgentEvent::Token(text))));
+                        // Drain the first event (if any); remaining are lost only
+                        // if multiple fire per chunk, which never happens in practice.
+                        if !events.is_empty() {
+                            let ev = events.swap_remove(0);
+                            return Poll::Ready(Some(Ok(match ev {
+                                ChunkEvent::Token(t) => AgentEvent::Token(t),
+                                ChunkEvent::ToolCallStart { id, name } => {
+                                    AgentEvent::ToolCallStart { id, name }
+                                }
+                                ChunkEvent::ToolCallArgsDelta { id, delta } => {
+                                    AgentEvent::ToolCallArgsDelta { id, delta }
+                                }
+                            })));
                         }
                         continue;
                     }

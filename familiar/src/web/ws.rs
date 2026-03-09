@@ -198,6 +198,18 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
                 reply_buf.push_str(&token);
                 json!({"type": "token", "content": token}).to_string()
             }
+            Ok(AgentEvent::ToolCallStart { id, name }) => json!({
+                "type": "tool_call_start",
+                "id": id,
+                "name": name,
+            })
+            .to_string(),
+            Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
+                "type": "tool_call_args_delta",
+                "id": id,
+                "delta": delta,
+            })
+            .to_string(),
             Ok(AgentEvent::ToolCall(info)) => json!({
                 "type": "tool_call",
                 "id": info.id,
