@@ -1,5 +1,7 @@
 import { memo, useState, useCallback, useEffect, useRef } from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { DiffView } from "./DiffView";
+import { TerminalView } from "./TerminalView";
 import type { ChatBubble } from "../api/types";
 import styles from "./MessageBubble.module.css";
 
@@ -101,17 +103,113 @@ function ToolCallBubble({
     return <FileCard file={fileResult} pending={bubble.pending} />;
   }
 
-  // Otherwise render generic tool call
-  // During streaming: args is null but argsRaw accumulates character by character.
-  // After tool_call final event: args is set (parsed JSON), argsRaw is the raw string.
+  // ── Route to specialised views based on tool name ─────────────────────────
+
+  const args = bubble.args as Record<string, unknown> | null;
+  const result = bubble.result as Record<string, unknown> | null;
+
+  // Terminal tools: execute, run_ts, run_py
+  const isTerminal =
+    bubble.name === "execute" ||
+    bubble.name === "run_ts" ||
+    bubble.name === "run_py";
+
+  // Diff tools: str_replace (has old_str + new_str), write (has path + content)
+  const isDiff =
+    !bubble.pending &&
+    result?.status === "success" &&
+    ((bubble.name === "str_replace" &&
+      args?.old_str !== undefined &&
+      args?.new_str !== undefined) ||
+      (bubble.name === "write" &&
+        args?.path !== undefined &&
+        args?.content !== undefined));
+
+  // ── Tool header (shared across all variants) ──────────────────────────────
+
+  const toolIcon = bubble.pending ? "⚙️" : "✅";
+  const toolLabel = isTerminal
+    ? args?.command
+      ? String(args.command)
+      : bubble.name
+    : bubble.name;
+
+  // For terminal/diff tools we show the specialised view inline (no expand).
+  // For other tools we keep the collapsible generic view.
+  const isInline = isTerminal || isDiff;
+
+  // Streaming args display (generic view only)
   const argsStr = bubble.args
     ? JSON.stringify(bubble.args, null, 2)
     : bubble.argsRaw || "";
   const argsStreaming = !bubble.args && bubble.argsRaw.length > 0;
   const resultStr =
-    bubble.result && !fileResult
+    !isInline && bubble.result && !fileResult
       ? JSON.stringify(bubble.result, null, 2)
       : null;
+
+  if (isInline) {
+    return (
+      <div className={styles.toolRow}>
+        <div className={styles.toolBubbleInline}>
+          {/* Header */}
+          <div className={styles.toolHeaderInline}>
+            <span className={styles.toolIcon} aria-hidden="true">
+              {toolIcon}
+            </span>
+            <span className={styles.toolName}>{toolLabel}</span>
+            {bubble.pending && (
+              <span className={styles.toolPending}>运行中…</span>
+            )}
+          </div>
+
+          {/* Specialised body */}
+          {!bubble.pending && isTerminal && (
+            <TerminalView
+              toolName={bubble.name}
+              command={args?.command ? String(args.command) : undefined}
+              stdout={result?.stdout ? String(result.stdout) : undefined}
+              stderr={result?.stderr ? String(result.stderr) : undefined}
+              exitCode={
+                result?.exit_code !== undefined
+                  ? (result.exit_code as number | null)
+                  : undefined
+              }
+            />
+          )}
+
+          {!bubble.pending && isDiff && bubble.name === "str_replace" && (
+            <DiffView
+              mode="str_replace"
+              path={String(args!.path)}
+              oldStr={String(args!.old_str)}
+              newStr={String(args!.new_str)}
+            />
+          )}
+
+          {!bubble.pending && isDiff && bubble.name === "write" && (
+            <DiffView
+              mode="write"
+              path={String(args!.path)}
+              newStr={String(args!.content)}
+            />
+          )}
+
+          {/* Streaming args while pending */}
+          {bubble.pending && argsStr && (
+            <div className={styles.toolSection}>
+              <pre className={styles.toolCode}>
+                {argsStr}
+                {argsStreaming && (
+                  <span className={styles.cursor} aria-hidden="true" />
+                )}
+              </pre>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.toolRow}>
@@ -122,7 +220,7 @@ function ToolCallBubble({
           aria-expanded={expanded}
         >
           <span className={styles.toolIcon} aria-hidden="true">
-            {bubble.pending ? "⚙️" : "✅"}
+            {toolIcon}
           </span>
           <span className={styles.toolName}>{bubble.name}</span>
           {bubble.pending && (

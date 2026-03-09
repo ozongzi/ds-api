@@ -160,6 +160,31 @@
     font-size: 0.83em;
 }
 
+/* Inline variant — no expand toggle, specialised view shown directly */
+.toolBubbleInline {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    font-size: 0.83em;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.toolHeaderInline {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.toolHeaderInline:last-child {
+    border-bottom: none;
+}
+
 .toolHeader {
     display: flex;
     align-items: center;
