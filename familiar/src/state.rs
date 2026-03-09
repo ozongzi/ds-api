@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -11,18 +13,83 @@ use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::tools::{CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// How many events to keep in the log for late-joining clients.
+// Enough to replay a full long turn including many tool calls.
+const EVENT_LOG_CAP: usize = 4096;
+
+// broadcast channel capacity — how many events can be buffered before
+// a slow subscriber starts missing messages.
+const BROADCAST_CAP: usize = 256;
+
+/// A single event that was (or will be) sent over WebSocket.
+/// Stored in the event log so late-joining clients can replay.
+#[derive(Debug, Clone)]
+pub struct WsEvent {
+    pub payload: String, // serialised JSON, ready to send
+}
 
 /// One entry per conversation.
 pub struct ChatEntry {
+    /// The agent when idle (not generating). Taken out during generation.
     pub agent: Option<DeepseekAgent>,
-    /// Kept alive so the agent's receiver is never dropped while the entry exists.
+
+    /// Kept alive so the agent's interrupt receiver is never dropped.
     pub interrupt_tx: UnboundedSender<String>,
+
+    /// Broadcast sender — the background generation task sends every event here.
+    /// WebSocket handlers subscribe to receive live events.
+    pub broadcast_tx: broadcast::Sender<Arc<WsEvent>>,
+
+    /// Ordered log of every event emitted in the current (or most recent) turn.
+    /// New WebSocket clients replay this before subscribing to live events so
+    /// they catch up even if they connected mid-generation or after it finished.
+    pub event_log: Vec<Arc<WsEvent>>,
+
+    /// True while a background generation task is running for this conversation.
+    pub generating: bool,
+
+    /// Set to true by ws.rs when the client sends { type: "abort" }.
+    /// The generation task polls this flag and stops early when it's set.
+    pub abort_flag: Arc<AtomicBool>,
+}
+
+impl ChatEntry {
+    fn new(agent: DeepseekAgent, interrupt_tx: UnboundedSender<String>) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
+        Self {
+            agent: Some(agent),
+            interrupt_tx,
+            broadcast_tx,
+            event_log: Vec::new(),
+            generating: false,
+            abort_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Emit an event: append to the log and broadcast to all live subscribers.
+    /// The log is capped at EVENT_LOG_CAP to avoid unbounded memory growth.
+    pub fn emit(&mut self, payload: String) {
+        let ev = Arc::new(WsEvent { payload });
+        if self.event_log.len() >= EVENT_LOG_CAP {
+            self.event_log.remove(0);
+        }
+        self.event_log.push(Arc::clone(&ev));
+        // Ignore send errors — no subscribers is fine.
+        let _ = self.broadcast_tx.send(ev);
+    }
+
+    /// Clear the event log for a new generation turn.
+    pub fn clear_log(&mut self) {
+        self.event_log.clear();
+    }
 }
 
 /// Shared application state, held behind `Arc`.
+#[derive(Clone)]
 pub struct AppState {
     /// Per-conversation agent instances, keyed by conversation UUID.
-    /// Wrapped in `Arc` so the web layer can share this map without cloning the whole state.
     pub chats: Arc<Mutex<HashMap<Uuid, ChatEntry>>>,
 
     /// DeepSeek API key, used when constructing new agents.
@@ -90,32 +157,105 @@ impl AppState {
         builder.with_interrupt_channel()
     }
 
-    /// Get or create the `ChatEntry` for `conversation_id`.
-    ///
-    /// If the entry already exists, calls `f` immediately (sync, no DB hit).
-    /// If it does not exist, builds a new agent first (async), then calls `f`.
-    pub async fn with_chat_async<R>(
+    /// Ensure a `ChatEntry` exists for `conversation_id`, building one if needed.
+    /// Returns a broadcast receiver (for live events) and the full event log
+    /// snapshot (for replay), plus whether generation is currently in progress.
+    pub async fn attach(
         &self,
         conversation_id: Uuid,
-        f: impl FnOnce(&mut ChatEntry) -> R,
-    ) -> R {
-        // Fast path: entry already exists.
+    ) -> (broadcast::Receiver<Arc<WsEvent>>, Vec<Arc<WsEvent>>, bool) {
+        // Fast path — entry already exists.
         {
-            let mut map = self.chats.lock().unwrap();
-            if let Some(entry) = map.get_mut(&conversation_id) {
-                return f(entry);
+            let map = self.chats.lock().unwrap();
+            if let Some(entry) = map.get(&conversation_id) {
+                let rx = entry.broadcast_tx.subscribe();
+                let log = entry.event_log.clone();
+                let generating = entry.generating;
+                return (rx, log, generating);
             }
         }
 
-        // Slow path: build agent (async, outside the lock).
+        // Slow path — build agent outside the lock.
         let (agent, tx) = self.build_agent(conversation_id).await;
-        let mut entry = ChatEntry {
-            agent: Some(agent),
-            interrupt_tx: tx,
-        };
-        let result = f(&mut entry);
+        let entry = ChatEntry::new(agent, tx);
+        let rx = entry.broadcast_tx.subscribe();
+        let log = entry.event_log.clone();
+        let generating = entry.generating;
         self.chats.lock().unwrap().insert(conversation_id, entry);
-        result
+        (rx, log, generating)
+    }
+
+    /// Start a background generation task for `conversation_id`.
+    ///
+    /// Pushes `user_text` onto the agent, marks the entry as `generating`,
+    /// clears the event log, and spawns a task that drives the agent stream,
+    /// emitting every event through the broadcast channel and the log.
+    ///
+    /// Returns `false` if generation is already in progress (caller should
+    /// send the event log replay + subscribe instead of starting a new turn).
+    pub async fn start_generation(&self, conversation_id: Uuid, user_text: String) -> bool {
+        // Take the agent out of the entry (if idle).
+        let (agent, abort_flag) = {
+            let mut map = self.chats.lock().unwrap();
+            let entry = match map.get_mut(&conversation_id) {
+                Some(e) => e,
+                None => return false,
+            };
+            if entry.generating {
+                return false;
+            }
+            // Clear previous turn's log and reset abort flag.
+            entry.clear_log();
+            entry.abort_flag.store(false, Ordering::Relaxed);
+            entry.generating = true;
+            (entry.agent.take(), Arc::clone(&entry.abort_flag))
+        };
+
+        let Some(mut agent) = agent else {
+            // Agent missing (shouldn't happen after attach, but be safe).
+            let mut map = self.chats.lock().unwrap();
+            if let Some(entry) = map.get_mut(&conversation_id) {
+                entry.generating = false;
+            }
+            return false;
+        };
+
+        agent.push_user_message_with_name(&user_text, None);
+
+        let state = self.clone();
+
+        tokio::spawn(async move {
+            run_generation(state, conversation_id, agent, abort_flag).await;
+        });
+
+        true
+    }
+
+    /// Inject a message into a running generation via the interrupt channel.
+    pub fn send_interrupt(&self, conversation_id: Uuid, content: String) {
+        let map = self.chats.lock().unwrap();
+        if let Some(entry) = map.get(&conversation_id) {
+            let _ = entry.interrupt_tx.send(content);
+        }
+    }
+
+    /// Signal the running generation task to stop as soon as possible.
+    /// The task will emit an { type: "aborted" } event, persist what it
+    /// has so far, recover the agent, and return.
+    pub fn abort_generation(&self, conversation_id: Uuid) {
+        let map = self.chats.lock().unwrap();
+        if let Some(entry) = map.get(&conversation_id) {
+            entry.abort_flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Emit an event on behalf of a conversation (used by the generation task
+    /// to record abort/error events that originate outside run_generation).
+    pub fn emit_event(&self, conversation_id: Uuid, payload: String) {
+        let mut map = self.chats.lock().unwrap();
+        if let Some(entry) = map.get_mut(&conversation_id) {
+            entry.emit(payload);
+        }
     }
 
     /// Append a message to the database and kick off embedding in the background.
@@ -130,7 +270,6 @@ impl AppState {
         let msg = msg.clone();
 
         tokio::spawn(async move {
-            // Insert with no embedding first so the row exists immediately.
             let row_id = match db.append(conversation_id, &msg, None).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -139,7 +278,6 @@ impl AppState {
                 }
             };
 
-            // Only embed user and assistant text content.
             let should_embed = matches!(
                 msg.role,
                 ds_api::raw::request::message::Role::User
@@ -162,5 +300,154 @@ impl AppState {
                 }
             }
         });
+    }
+
+    // ── Legacy helper kept for callers that still need direct map access ──────
+
+    /// Run a synchronous closure against the `ChatEntry` for `conversation_id`,
+    /// building a new entry if one doesn't exist yet (sync — agent not rebuilt).
+    /// Only use this for quick mutations that don't need the agent to be present.
+    pub fn with_chat_sync<R>(
+        &self,
+        conversation_id: Uuid,
+        f: impl FnOnce(&mut ChatEntry) -> R,
+    ) -> Option<R> {
+        let mut map = self.chats.lock().unwrap();
+        map.get_mut(&conversation_id).map(f)
+    }
+}
+
+// ── Background generation task ────────────────────────────────────────────────
+
+/// Drives the agent stream to completion, emitting every event through the
+/// broadcast channel and the event log so any number of WebSocket clients
+/// can subscribe (or catch up after reconnecting).
+async fn run_generation(
+    state: AppState,
+    conversation_id: Uuid,
+    agent: DeepseekAgent,
+    abort_flag: Arc<AtomicBool>,
+) {
+    use ds_api::raw::request::message::{Message as AgentMessage, Role};
+    use futures::StreamExt;
+    use serde_json::json;
+
+    let mut stream = agent.chat_from_history();
+    let mut reply_buf = String::new();
+
+    loop {
+        // Check abort flag before polling the next event.
+        if abort_flag.load(Ordering::Relaxed) {
+            // Emit aborted event, persist what we have, recover agent.
+            {
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.emit(json!({"type": "aborted"}).to_string());
+                }
+            }
+            if !reply_buf.is_empty() {
+                let msg = AgentMessage::new(Role::Assistant, &reply_buf);
+                state.persist_message(conversation_id, &msg);
+            }
+            if let Some(recovered) = stream.into_agent() {
+                let mut map = state.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    entry.agent = Some(recovered);
+                    entry.generating = false;
+                    entry.abort_flag.store(false, Ordering::Relaxed);
+                }
+            }
+            return;
+        }
+
+        tokio::select! {
+            biased;
+
+            agent_event = stream.next() => {
+                let Some(event) = agent_event else {
+                    break;
+                };
+
+                let payload = match event {
+                    Ok(AgentEvent::Token(token)) => {
+                        reply_buf.push_str(&token);
+                        json!({"type": "token", "content": token}).to_string()
+                    }
+                    Ok(AgentEvent::ToolCallStart { id, name }) => json!({
+                        "type": "tool_call_start",
+                        "id": id,
+                        "name": name,
+                    }).to_string(),
+                    Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
+                        "type": "tool_call_args_delta",
+                        "id": id,
+                        "delta": delta,
+                    }).to_string(),
+                    Ok(AgentEvent::ToolCall(info)) => json!({
+                        "type": "tool_call",
+                        "id": info.id,
+                        "name": info.name,
+                        "args": info.args,
+                    }).to_string(),
+                    Ok(AgentEvent::ToolResult(res)) => json!({
+                        "type": "tool_result",
+                        "id": res.id,
+                        "name": res.name,
+                        "result": res.result,
+                    }).to_string(),
+                    Err(e) => {
+                        error!(conversation = %conversation_id, "agent error: {e}");
+                        let payload = json!({"type": "error", "message": e.to_string()}).to_string();
+                        // Emit the error event before recovering.
+                        {
+                            let mut map = state.chats.lock().unwrap();
+                            if let Some(entry) = map.get_mut(&conversation_id) {
+                                entry.emit(payload);
+                            }
+                        }
+                        // Recover the agent.
+                        if let Some(recovered) = stream.into_agent() {
+                            let mut map = state.chats.lock().unwrap();
+                            if let Some(entry) = map.get_mut(&conversation_id) {
+                                entry.agent = Some(recovered);
+                                entry.generating = false;
+                            }
+                        }
+                        return;
+                    }
+                };
+
+                // Emit to log + broadcast.
+                {
+                    let mut map = state.chats.lock().unwrap();
+                    if let Some(entry) = map.get_mut(&conversation_id) {
+                        entry.emit(payload);
+                    }
+                }
+            }
+
+            else => break,
+        }
+    }
+
+    // ── Recover agent ─────────────────────────────────────────────────────────
+    let recovered = stream.into_agent();
+
+    // ── Persist assistant reply ───────────────────────────────────────────────
+    if !reply_buf.is_empty() {
+        let msg = AgentMessage::new(Role::Assistant, &reply_buf);
+        state.persist_message(conversation_id, &msg);
+    }
+
+    // ── Emit done, put agent back ─────────────────────────────────────────────
+    {
+        let mut map = state.chats.lock().unwrap();
+        if let Some(entry) = map.get_mut(&conversation_id) {
+            entry.emit(json!({"type": "done"}).to_string());
+            entry.generating = false;
+            if let Some(agent) = recovered {
+                entry.agent = Some(agent);
+            }
+        }
     }
 }

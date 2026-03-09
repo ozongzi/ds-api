@@ -7,13 +7,14 @@ use axum::{
     },
     response::Response,
 };
-use ds_api::AgentEvent;
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use sqlx::Row;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::errors::AppError;
+use crate::state::WsEvent;
 use crate::web::AppState;
 
 pub async fn ws_handler(
@@ -21,8 +22,6 @@ pub async fn ws_handler(
     State(state): State<AppState>,
     Path(conversation_id): Path<Uuid>,
 ) -> Result<Response, AppError> {
-    // Verify conversation exists (ownership is checked via the token passed
-    // over the WebSocket on first message — see below).
     let exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = $1)")
             .bind(conversation_id)
@@ -44,8 +43,8 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
     let (mut sender, mut receiver) = socket.split();
 
     // ── Auth handshake ────────────────────────────────────────────────────────
-    // First message must be: { "token": "<bearer>" }
-    let user_id = match receiver.next().await {
+    // First message: { "token": "<bearer>" }
+    let _user_id = match receiver.next().await {
         Some(Ok(Message::Text(txt))) => {
             let v: serde_json::Value = match serde_json::from_str(&txt) {
                 Ok(v) => v,
@@ -74,7 +73,6 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
                 }
             };
 
-            // Verify token owns this conversation.
             match sqlx::query(
                 r#"
                 SELECT c.user_id
@@ -115,178 +113,223 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
         _ => return,
     };
 
-    // ── Wait for a user message ───────────────────────────────────────────────
-    // Second message: { "content": "<text>" }
-    let user_text = match receiver.next().await {
-        Some(Ok(Message::Text(txt))) => {
-            let v: serde_json::Value = match serde_json::from_str(&txt) {
-                Ok(v) => v,
-                Err(_) => {
-                    let _ = sender
-                        .send(Message::Text(
-                            json!({"type":"error","message":"invalid message"})
-                                .to_string()
-                                .into(),
-                        ))
-                        .await;
-                    return;
-                }
-            };
-            match v
-                .get("content")
-                .and_then(|c| c.as_str())
-                .map(|s| s.to_string())
-            {
-                Some(t) if !t.trim().is_empty() => t,
-                _ => {
-                    let _ = sender
-                        .send(Message::Text(
-                            json!({"type":"error","message":"empty content"})
-                                .to_string()
-                                .into(),
-                        ))
-                        .await;
-                    return;
-                }
+    // ── Second message: either a new user turn or a "reattach" ───────────────
+    // { "content": "..." }  → start a new generation turn
+    // { "type": "reattach" } → just subscribe to ongoing/completed generation
+    let second: serde_json::Value = match receiver.next().await {
+        Some(Ok(Message::Text(txt))) => match serde_json::from_str(&txt) {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = sender
+                    .send(Message::Text(
+                        json!({"type":"error","message":"invalid message"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+                return;
             }
-        }
+        },
         _ => return,
     };
 
-    // ── Persist user message ──────────────────────────────────────────────────
-    {
-        use ds_api::raw::request::message::{Message as AgentMessage, Role};
-        let msg = AgentMessage::new(Role::User, &user_text);
-        state.persist_message(conversation_id, &msg);
+    // ── Ensure ChatEntry exists and get a broadcast receiver + event log ──────
+    let (mut live_rx, event_log, already_generating) = state.attach(conversation_id).await;
+
+    let is_reattach = second
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t == "reattach")
+        .unwrap_or(false);
+
+    if is_reattach {
+        // Client reconnected mid-generation or after — just replay + relay.
+        tracing::info!(conversation = %conversation_id, "client reattached");
+    } else {
+        // New user message.
+        let user_text = match second
+            .get("content")
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string())
+        {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => {
+                let _ = sender
+                    .send(Message::Text(
+                        json!({"type":"error","message":"empty content"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+                return;
+            }
+        };
+
+        // Persist user message.
+        {
+            use ds_api::raw::request::message::{Message as AgentMessage, Role};
+            let msg = AgentMessage::new(Role::User, &user_text);
+            state.persist_message(conversation_id, &msg);
+        }
+
+        if already_generating {
+            // Agent is busy — inject via interrupt channel instead.
+            tracing::info!(conversation = %conversation_id, "agent busy, injecting via interrupt");
+            state.send_interrupt(conversation_id, user_text.clone());
+            // Echo the injected message back to this client.
+            let _ = sender
+                .send(Message::Text(
+                    json!({"type": "user_interrupt", "content": user_text})
+                        .to_string()
+                        .into(),
+                ))
+                .await;
+        } else {
+            // Start a new background generation task.
+            let started = state.start_generation(conversation_id, user_text).await;
+            if !started {
+                let _ = sender
+                    .send(Message::Text(
+                        json!({"type":"error","message":"failed to start generation"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+                return;
+            }
+            // Re-subscribe so we get a fresh receiver aligned with the new turn's log.
+            // (The previous rx was created before start_generation cleared the log.)
+            let (new_rx, new_log, _) = state.attach(conversation_id).await;
+            live_rx = new_rx;
+            // new_log should be empty or contain only events emitted so far in
+            // this brand-new turn — replay it below.
+            let _ = replay_log(&mut sender, &new_log).await;
+            // Skip the second replay below.
+            relay_live(&mut sender, &mut receiver, live_rx, state, conversation_id).await;
+            return;
+        }
     }
 
-    // ── Acquire or create agent ───────────────────────────────────────────────
-    let agent_opt = state
-        .with_chat_async(conversation_id, |entry| {
-            if entry.agent.is_some() {
-                entry.agent.take()
-            } else {
-                let _ = entry.interrupt_tx.send(user_text.clone());
-                None
-            }
-        })
-        .await;
-
-    let Some(mut agent) = agent_opt else {
-        let _ = sender
-            .send(Message::Text(
-                json!({"type":"error","message":"agent busy"})
-                    .to_string()
-                    .into(),
-            ))
-            .await;
+    // ── Replay the event log to catch the client up ───────────────────────────
+    if replay_log(&mut sender, &event_log).await.is_err() {
         return;
-    };
+    }
 
-    agent.push_user_message_with_name(&user_text, None);
+    // If the log already ends with "done" or "aborted", the generation is over —
+    // no need to subscribe to live events.
+    let last_type = event_log.last().and_then(|ev| {
+        serde_json::from_str::<serde_json::Value>(&ev.payload)
+            .ok()
+            .and_then(|v| {
+                v.get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
+    });
 
-    // ── Stream events ─────────────────────────────────────────────────────────
-    let state = Arc::new(state);
-    let state_clone = Arc::clone(&state);
+    if matches!(
+        last_type.as_deref(),
+        Some("done") | Some("aborted") | Some("error")
+    ) {
+        return;
+    }
 
-    let mut stream = agent.chat_from_history();
-    let mut reply_buf = String::new();
+    // ── Relay live events until done ──────────────────────────────────────────
+    relay_live(&mut sender, &mut receiver, live_rx, state, conversation_id).await;
+}
 
-    // While the agent is streaming we also need to listen for incoming client
-    // messages so the user can:
-    //   { "type": "interrupt", "content": "..." } — inject a message mid-stream
-    //   { "type": "abort" }                        — stop generation immediately
-    //
-    // We drive both concurrently with a simple select loop: on each iteration
-    // we poll the agent stream and the WebSocket receiver, prioritising agent
-    // events to keep latency low.
+/// Send every event in the log to the client.
+async fn replay_log(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    log: &[Arc<WsEvent>],
+) -> Result<(), ()> {
+    for ev in log {
+        if sender
+            .send(Message::Text(ev.payload.clone().into()))
+            .await
+            .is_err()
+        {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+/// Forward live broadcast events to the client, and handle incoming client
+/// control messages (abort / interrupt) until the generation finishes.
+async fn relay_live(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    receiver: &mut futures::stream::SplitStream<WebSocket>,
+    mut live_rx: broadcast::Receiver<Arc<WsEvent>>,
+    state: AppState,
+    conversation_id: Uuid,
+) {
     loop {
-        // Use a biased select: check agent stream first, then client messages.
         tokio::select! {
             biased;
 
-            // ── Agent event ───────────────────────────────────────────────
-            agent_event = stream.next() => {
-                let Some(event) = agent_event else {
-                    // Stream finished normally.
-                    break;
-                };
-
-                let msg_text = match event {
-                    Ok(AgentEvent::Token(token)) => {
-                        reply_buf.push_str(&token);
-                        json!({"type": "token", "content": token}).to_string()
-                    }
-                    Ok(AgentEvent::ToolCallStart { id, name }) => json!({
-                        "type": "tool_call_start",
-                        "id": id,
-                        "name": name,
-                    })
-                    .to_string(),
-                    Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
-                        "type": "tool_call_args_delta",
-                        "id": id,
-                        "delta": delta,
-                    })
-                    .to_string(),
-                    Ok(AgentEvent::ToolCall(info)) => json!({
-                        "type": "tool_call",
-                        "id": info.id,
-                        "name": info.name,
-                        "args": info.args,
-                    })
-                    .to_string(),
-                    Ok(AgentEvent::ToolResult(res)) => json!({
-                        "type": "tool_result",
-                        "id": res.id,
-                        "name": res.name,
-                        "result": res.result,
-                    })
-                    .to_string(),
-                    Err(e) => {
-                        tracing::error!(conversation = %conversation_id, "agent error: {e}");
-                        let _ = sender
-                            .send(Message::Text(
-                                json!({"type":"error","message": e.to_string()})
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await;
-                        if let Some(recovered) = stream.into_agent() {
-                            state_clone
-                                .with_chat_async(conversation_id, |entry| {
-                                    entry.agent = Some(recovered);
-                                })
-                                .await;
+            // ── Incoming broadcast event from the generation task ─────────
+            result = live_rx.recv() => {
+                match result {
+                    Ok(ev) => {
+                        // Forward to client.
+                        if sender
+                            .send(Message::Text(ev.payload.clone().into()))
+                            .await
+                            .is_err()
+                        {
+                            // Client disconnected — generation keeps running in background.
+                            return;
                         }
+
+                        // Stop relaying when the generation is finished.
+                        let ev_type = serde_json::from_str::<serde_json::Value>(&ev.payload)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            });
+                        if matches!(ev_type.as_deref(), Some("done") | Some("aborted") | Some("error")) {
+                            return;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        // We missed some events — re-attach to get the full log.
+                        tracing::warn!(
+                            conversation = %conversation_id,
+                            "broadcast lagged by {n}, resyncing event log"
+                        );
+                        let (new_rx, log, _) = state.attach(conversation_id).await;
+                        live_rx = new_rx;
+                        // Replay the full log from the beginning (client will see
+                        // duplicates for events it already received — acceptable).
+                        if replay_log(sender, &log).await.is_err() {
+                            return;
+                        }
+                        // Check if already done.
+                        let last_type = log.last().and_then(|ev| {
+                            serde_json::from_str::<serde_json::Value>(&ev.payload)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("type")
+                                        .and_then(|t| t.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                        });
+                        if matches!(last_type.as_deref(), Some("done") | Some("aborted") | Some("error")) {
+                            return;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Sender dropped — generation task ended.
                         return;
                     }
-                };
-
-                if sender.send(Message::Text(msg_text.into())).await.is_err() {
-                    // Client disconnected — recover agent and bail.
-                    if let Some(recovered) = stream.into_agent() {
-                        state_clone
-                            .with_chat_async(conversation_id, |entry| {
-                                entry.agent = Some(recovered);
-                            })
-                            .await;
-                    }
-                    return;
                 }
             }
 
-            // ── Incoming client message during streaming ───────────────────
+            // ── Incoming client control message ───────────────────────────
             ws_msg = receiver.next() => {
                 let Some(Ok(Message::Text(txt))) = ws_msg else {
-                    // Socket closed or non-text frame — stop streaming.
-                    if let Some(recovered) = stream.into_agent() {
-                        state_clone
-                            .with_chat_async(conversation_id, |entry| {
-                                entry.agent = Some(recovered);
-                            })
-                            .await;
-                    }
+                    // Socket closed — generation keeps running.
                     return;
                 };
 
@@ -297,42 +340,23 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
 
                 match v.get("type").and_then(|t| t.as_str()) {
                     Some("abort") => {
-                        // Client wants to stop — recover agent, send aborted event, done.
-                        tracing::info!(conversation = %conversation_id, "client aborted stream");
-                        if let Some(recovered) = stream.into_agent() {
-                            state_clone
-                                .with_chat_async(conversation_id, |entry| {
-                                    entry.agent = Some(recovered);
-                                })
-                                .await;
-                        }
-                        let _ = sender
-                            .send(Message::Text(
-                                json!({"type": "aborted"}).to_string().into(),
-                            ))
-                            .await;
-                        // Persist whatever we accumulated so far.
-                        if !reply_buf.is_empty() {
-                            use ds_api::raw::request::message::{Message as AgentMessage, Role};
-                            let msg = AgentMessage::new(Role::Assistant, &reply_buf);
-                            state_clone.persist_message(conversation_id, &msg);
-                        }
-                        return;
+                        tracing::info!(conversation = %conversation_id, "client requested abort");
+                        state.abort_generation(conversation_id);
+                        // Don't close — wait for the "aborted" event from the task.
                     }
                     Some("interrupt") => {
-                        // Inject a user message into the running agent via the interrupt channel.
                         if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
                             if !content.trim().is_empty() {
                                 tracing::info!(
                                     conversation = %conversation_id,
                                     "client interrupt: {content}"
                                 );
-                                state_clone
-                                    .with_chat_async(conversation_id, |entry| {
-                                        let _ = entry.interrupt_tx.send(content.to_string());
-                                    })
-                                    .await;
-                                // Echo it back as a user bubble so the UI shows it inline.
+                                state.send_interrupt(conversation_id, content.to_string());
+                                // Persist the interrupt message.
+                                use ds_api::raw::request::message::{Message as AgentMessage, Role};
+                                let msg = AgentMessage::new(Role::User, content);
+                                state.persist_message(conversation_id, &msg);
+                                // Echo back to the client.
                                 let _ = sender
                                     .send(Message::Text(
                                         json!({
@@ -343,40 +367,12 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
                                         .into(),
                                     ))
                                     .await;
-                                // Persist the interrupt message.
-                                use ds_api::raw::request::message::{Message as AgentMessage, Role};
-                                let msg = AgentMessage::new(Role::User, content);
-                                state_clone.persist_message(conversation_id, &msg);
                             }
                         }
                     }
-                    _ => {} // ignore unknown message types during streaming
+                    _ => {}
                 }
             }
         }
     }
-
-    // ── Recover agent ─────────────────────────────────────────────────────────
-    if let Some(recovered) = stream.into_agent() {
-        state_clone
-            .with_chat_async(conversation_id, |entry| {
-                entry.agent = Some(recovered);
-            })
-            .await;
-    }
-
-    // ── Persist assistant reply ───────────────────────────────────────────────
-    if !reply_buf.is_empty() {
-        use ds_api::raw::request::message::{Message as AgentMessage, Role};
-        let msg = AgentMessage::new(Role::Assistant, &reply_buf);
-        state_clone.persist_message(conversation_id, &msg);
-    }
-
-    // ── Send done ─────────────────────────────────────────────────────────────
-    let _ = sender
-        .send(Message::Text(json!({"type":"done"}).to_string().into()))
-        .await;
-
-    // Ignore user_id — used only for auth verification above.
-    let _ = user_id;
 }

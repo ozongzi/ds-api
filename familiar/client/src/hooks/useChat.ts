@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChatBubble,
   TextBubble,
@@ -23,6 +23,8 @@ export function useChat(conversationId: string | null, token: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
   // Stable ref so abort/interrupt callbacks never go stale.
   const wsLiveRef = useRef<WebSocket | null>(null);
+  // Track which conversationId we last attached to, to avoid double-attach.
+  const attachedConvRef = useRef<string | null>(null);
 
   // Key of the assistant TextBubble that is currently accumulating tokens.
   // null means no active text segment yet (next token will create one).
@@ -95,6 +97,7 @@ export function useChat(conversationId: string | null, token: string | null) {
     activeTextKeyRef.current = null;
     updateStatus("idle");
     setErrorMsg(null);
+    attachedConvRef.current = null;
   }, []);
 
   // ── Interrupt / abort (usable while streaming) ─────────────────────────
@@ -122,6 +125,181 @@ export function useChat(conversationId: string | null, token: string | null) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "abort" }));
   }, []);
+
+  // ── Core WebSocket event processor (shared by send and reattach) ───────
+
+  /**
+   * Process a single parsed WsServerEvent, mutating bubble state.
+   * Returns true if the event signals end-of-stream (done/aborted/error).
+   */
+  const processEvent = useCallback(
+    (event: WsServerEvent): boolean => {
+      if (event.type === "user_interrupt") {
+        return false;
+      } else if (event.type === "aborted") {
+        sealActiveText();
+        updateStatus("idle");
+        return true;
+      } else if (event.type === "token") {
+        const key = ensureActiveText();
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.key === key && b.kind === "text"
+              ? { ...b, content: b.content + event.content }
+              : b,
+          ),
+        );
+      } else if (event.type === "tool_call_start") {
+        sealActiveText();
+        const toolBubble: ToolBubble = {
+          kind: "tool",
+          key: `tool-${event.id}`,
+          role: "tool",
+          name: event.name,
+          args: null,
+          argsRaw: "",
+          result: null,
+          pending: true,
+        };
+        setBubbles((prev) => {
+          // Avoid duplicates during replay.
+          if (prev.some((b) => b.key === `tool-${event.id}`)) return prev;
+          return [...prev, toolBubble];
+        });
+      } else if (event.type === "tool_call_args_delta") {
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.key === `tool-${event.id}` && b.kind === "tool"
+              ? { ...b, argsRaw: b.argsRaw + event.delta }
+              : b,
+          ),
+        );
+      } else if (event.type === "tool_call") {
+        sealActiveText();
+        setBubbles((prev) => {
+          const exists = prev.some(
+            (b) => b.key === `tool-${event.id}` && b.kind === "tool",
+          );
+          if (exists) {
+            return prev.map((b) =>
+              b.key === `tool-${event.id}` && b.kind === "tool"
+                ? { ...b, args: event.args }
+                : b,
+            );
+          }
+          const toolBubble: ToolBubble = {
+            kind: "tool",
+            key: `tool-${event.id}`,
+            role: "tool",
+            name: event.name,
+            args: event.args,
+            argsRaw: "",
+            result: null,
+            pending: true,
+          };
+          return [...prev, toolBubble];
+        });
+      } else if (event.type === "tool_result") {
+        setBubbles((prev) =>
+          prev.map((b) =>
+            b.key === `tool-${event.id}` && b.kind === "tool"
+              ? { ...b, result: event.result, pending: false }
+              : b,
+          ),
+        );
+      } else if (event.type === "done") {
+        sealActiveText();
+        updateStatus("idle");
+        return true;
+      } else if (event.type === "error") {
+        const key = activeTextKeyRef.current;
+        if (key) {
+          setBubbles((prev) => prev.filter((b) => b.key !== key));
+          activeTextKeyRef.current = null;
+        }
+        updateStatus("error");
+        setErrorMsg(event.message);
+        return true;
+      }
+      return false;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // ── Reattach to an ongoing generation on mount / conversation change ────
+
+  useEffect(() => {
+    if (!conversationId || !token) return;
+    if (attachedConvRef.current === conversationId) return;
+
+    // Only reattach if we don't already have an active WS connection.
+    if (wsLiveRef.current) return;
+
+    attachedConvRef.current = conversationId;
+
+    const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(
+      `${wsProtocol}://${location.host}/ws/${conversationId}`,
+    );
+    wsRef.current = ws;
+    wsLiveRef.current = ws;
+
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ token }));
+      ws.send(JSON.stringify({ type: "reattach" }));
+    });
+
+    ws.addEventListener("message", (ev) => {
+      let event: WsServerEvent;
+      try {
+        event = JSON.parse(ev.data as string) as WsServerEvent;
+      } catch {
+        return;
+      }
+
+      // During reattach we set status to streaming as soon as we see any
+      // non-terminal event, so the UI shows the in-progress state.
+      if (
+        statusRef.current === "idle" &&
+        event.type !== "done" &&
+        event.type !== "aborted" &&
+        event.type !== "error"
+      ) {
+        updateStatus("streaming");
+      }
+
+      const finished = processEvent(event);
+      if (finished) {
+        ws.close(1000);
+        wsRef.current = null;
+        wsLiveRef.current = null;
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      wsRef.current = null;
+      wsLiveRef.current = null;
+    });
+
+    ws.addEventListener("close", () => {
+      wsRef.current = null;
+      wsLiveRef.current = null;
+    });
+
+    return () => {
+      // On unmount / conversation switch, close the reattach socket if still open
+      // but leave the generation running on the server.
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        ws.close(1000);
+      }
+      wsRef.current = null;
+      wsLiveRef.current = null;
+    };
+  }, [conversationId, token, processEvent]);
 
   // ── Open a new WebSocket turn ──────────────────────────────────────────
 
@@ -155,13 +333,12 @@ export function useChat(conversationId: string | null, token: string | null) {
       );
       wsRef.current = ws;
       wsLiveRef.current = ws;
+      attachedConvRef.current = conversationId;
 
       ws.addEventListener("open", () => {
         ws.send(JSON.stringify({ token }));
         ws.send(JSON.stringify({ content: text }));
         updateStatus("streaming");
-        // Don't pre-create an assistant bubble here — we create it lazily
-        // on the first token, so the order is always correct.
       });
 
       ws.addEventListener("message", (ev) => {
@@ -172,103 +349,8 @@ export function useChat(conversationId: string | null, token: string | null) {
           return;
         }
 
-        if (event.type === "user_interrupt") {
-          // Server echoes back the injected message — we already showed it
-          // optimistically in interrupt(), so just ignore the echo.
-          return;
-        } else if (event.type === "aborted") {
-          sealActiveText();
-          updateStatus("idle");
-          ws.close(1000);
-          wsRef.current = null;
-          wsLiveRef.current = null;
-          return;
-        } else if (event.type === "token") {
-          // Append to the current active text segment, creating one if needed.
-          const key = ensureActiveText();
-          setBubbles((prev) =>
-            prev.map((b) =>
-              b.key === key && b.kind === "text"
-                ? { ...b, content: b.content + event.content }
-                : b,
-            ),
-          );
-        } else if (event.type === "tool_call_start") {
-          // Streaming: tool name is known, args not yet arrived.
-          sealActiveText();
-          const toolBubble: ToolBubble = {
-            kind: "tool",
-            key: `tool-${event.id}`,
-            role: "tool",
-            name: event.name,
-            args: null,
-            argsRaw: "",
-            result: null,
-            pending: true,
-          };
-          setBubbles((prev) => [...prev, toolBubble]);
-        } else if (event.type === "tool_call_args_delta") {
-          // Streaming: append raw args fragment to the existing bubble.
-          setBubbles((prev) =>
-            prev.map((b) =>
-              b.key === `tool-${event.id}` && b.kind === "tool"
-                ? { ...b, argsRaw: b.argsRaw + event.delta }
-                : b,
-            ),
-          );
-        } else if (event.type === "tool_call") {
-          // Final event: full parsed args arrive (or first event in non-streaming).
-          // If tool_call_start already created the bubble, update args in place.
-          // If not (non-streaming path), create the bubble now.
-          sealActiveText();
-          setBubbles((prev) => {
-            const exists = prev.some(
-              (b) => b.key === `tool-${event.id}` && b.kind === "tool",
-            );
-            if (exists) {
-              return prev.map((b) =>
-                b.key === `tool-${event.id}` && b.kind === "tool"
-                  ? { ...b, args: event.args }
-                  : b,
-              );
-            }
-            const toolBubble: ToolBubble = {
-              kind: "tool",
-              key: `tool-${event.id}`,
-              role: "tool",
-              name: event.name,
-              args: event.args,
-              argsRaw: "",
-              result: null,
-              pending: true,
-            };
-            return [...prev, toolBubble];
-          });
-        } else if (event.type === "tool_result") {
-          setBubbles((prev) =>
-            prev.map((b) =>
-              b.key === `tool-${event.id}` && b.kind === "tool"
-                ? { ...b, result: event.result, pending: false }
-                : b,
-            ),
-          );
-          // After a tool result the agent may emit more tokens — ensureActiveText
-          // will create a new text bubble for them automatically.
-        } else if (event.type === "done") {
-          sealActiveText();
-          updateStatus("idle");
-          ws.close(1000);
-          wsRef.current = null;
-          wsLiveRef.current = null;
-        } else if (event.type === "error") {
-          // Remove the current (possibly empty) active text bubble on error.
-          const key = activeTextKeyRef.current;
-          if (key) {
-            setBubbles((prev) => prev.filter((b) => b.key !== key));
-            activeTextKeyRef.current = null;
-          }
-          updateStatus("error");
-          setErrorMsg(event.message);
+        const finished = processEvent(event);
+        if (finished) {
           ws.close(1000);
           wsRef.current = null;
           wsLiveRef.current = null;
