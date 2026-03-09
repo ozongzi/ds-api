@@ -426,9 +426,9 @@
 }
 
 .fileCardBtnPrimary {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: #c4b5fd;
+    background: #f0e0d8;
+    border-color: #d4856a;
+    color: var(--accent);
 }
 
 .fileCardBtnPrimary:hover {
