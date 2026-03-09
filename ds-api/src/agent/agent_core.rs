@@ -217,4 +217,20 @@ impl DeepseekAgent {
         self.interrupt_rx = Some(rx);
         (self, tx)
     }
+
+    /// Drain any pending messages from the interrupt channel and append them
+    /// to the conversation history as `Role::User` messages.
+    ///
+    /// Called by the state machine in [`AgentStream`] at the top of every
+    /// `Idle` transition so that injected messages are visible before each API
+    /// turn, not just after tool-execution rounds.
+    pub(crate) fn drain_interrupts(&mut self) {
+        if let Some(rx) = self.interrupt_rx.as_mut() {
+            while let Ok(msg) = rx.try_recv() {
+                self.conversation
+                    .history_mut()
+                    .push(Message::new(Role::User, &msg));
+            }
+        }
+    }
 }

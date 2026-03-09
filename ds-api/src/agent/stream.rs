@@ -190,7 +190,9 @@ impl Stream for AgentStream {
                 AgentStreamState::Done => return Poll::Ready(None),
 
                 AgentStreamState::Idle => {
-                    let agent = this.agent.take().expect("agent missing in Idle state");
+                    let agent = this.agent.as_mut().expect("agent missing in Idle state");
+                    agent.drain_interrupts();
+                    let agent = this.agent.take().unwrap();
                     this.state = AgentStreamState::Summarizing(Box::pin(run_summarize(agent)));
                 }
 
