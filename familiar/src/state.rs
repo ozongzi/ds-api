@@ -249,15 +249,6 @@ impl AppState {
         }
     }
 
-    /// Emit an event on behalf of a conversation (used by the generation task
-    /// to record abort/error events that originate outside run_generation).
-    pub fn emit_event(&self, conversation_id: Uuid, payload: String) {
-        let mut map = self.chats.lock().unwrap();
-        if let Some(entry) = map.get_mut(&conversation_id) {
-            entry.emit(payload);
-        }
-    }
-
     /// Append a message to the database and kick off embedding in the background.
     /// Fire-and-forget: errors are logged, never propagated.
     pub fn persist_message(
@@ -300,20 +291,6 @@ impl AppState {
                 }
             }
         });
-    }
-
-    // ── Legacy helper kept for callers that still need direct map access ──────
-
-    /// Run a synchronous closure against the `ChatEntry` for `conversation_id`,
-    /// building a new entry if one doesn't exist yet (sync — agent not rebuilt).
-    /// Only use this for quick mutations that don't need the agent to be present.
-    pub fn with_chat_sync<R>(
-        &self,
-        conversation_id: Uuid,
-        f: impl FnOnce(&mut ChatEntry) -> R,
-    ) -> Option<R> {
-        let mut map = self.chats.lock().unwrap();
-        map.get_mut(&conversation_id).map(f)
     }
 }
 
