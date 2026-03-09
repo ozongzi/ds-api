@@ -1,5 +1,10 @@
 import { useCallback, useRef, useState } from "react";
-import type { ChatBubble, WsServerEvent } from "../api/types";
+import type {
+  ChatBubble,
+  TextBubble,
+  ToolBubble,
+  WsServerEvent,
+} from "../api/types";
 
 type ChatStatus = "idle" | "connecting" | "streaming" | "error";
 
@@ -13,16 +18,63 @@ export function useChat(conversationId: string | null, token: string | null) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  // Key of the assistant bubble currently being streamed
-  const streamKeyRef = useRef<string | null>(null);
 
-  // Load historical messages as bubbles (called once when a conversation opens)
+  // Key of the assistant TextBubble that is currently accumulating tokens.
+  // null means no active text segment yet (next token will create one).
+  const activeTextKeyRef = useRef<string | null>(null);
+
+  // statusRef so close/error handlers always read the latest value
+  // without stale-closure issues.
+  const statusRef = useRef<ChatStatus>("idle");
+
+  function updateStatus(s: ChatStatus) {
+    statusRef.current = s;
+    setStatus(s);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /** Seal the current active text bubble (stop streaming). */
+  function sealActiveText() {
+    const key = activeTextKeyRef.current;
+    if (!key) return;
+    setBubbles((prev) =>
+      prev.map((b) =>
+        b.key === key && b.kind === "text" ? { ...b, streaming: false } : b,
+      ),
+    );
+    activeTextKeyRef.current = null;
+  }
+
+  /**
+   * Ensure there is an active streaming text bubble for the assistant.
+   * If one already exists, returns its key; otherwise creates a new one
+   * and appends it to the list.
+   */
+  function ensureActiveText(): string {
+    if (activeTextKeyRef.current) return activeTextKeyRef.current;
+    const key = uid();
+    activeTextKeyRef.current = key;
+    const bubble: TextBubble = {
+      kind: "text",
+      key,
+      role: "assistant",
+      content: "",
+      streaming: true,
+    };
+    setBubbles((prev) => [...prev, bubble]);
+    return key;
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
+
   const setHistory = useCallback(
     (msgs: Array<{ role: string; content: string | null }>) => {
-      const history: ChatBubble[] = msgs
+      const history: TextBubble[] = msgs
         .filter((m) => m.role === "user" || m.role === "assistant")
         .filter((m) => m.content && m.content.trim().length > 0)
         .map((m) => ({
+          kind: "text" as const,
           key: uid(),
           role: m.role as "user" | "assistant",
           content: m.content!,
@@ -30,58 +82,52 @@ export function useChat(conversationId: string | null, token: string | null) {
         }));
       setBubbles(history);
     },
-    []
+    [],
   );
 
   const clearBubbles = useCallback(() => {
     setBubbles([]);
-    setStatus("idle");
+    activeTextKeyRef.current = null;
+    updateStatus("idle");
     setErrorMsg(null);
   }, []);
 
   const send = useCallback(
     (text: string) => {
       if (!conversationId || !token) return;
-      if (status === "connecting" || status === "streaming") return;
+      if (
+        statusRef.current === "connecting" ||
+        statusRef.current === "streaming"
+      )
+        return;
 
       setErrorMsg(null);
+      activeTextKeyRef.current = null;
 
-      // ── Optimistically add user bubble ──────────────────────────────────
-      const userKey = uid();
-      setBubbles((prev) => [
-        ...prev,
-        { key: userKey, role: "user", content: text, streaming: false },
-      ]);
+      // Optimistically add user bubble
+      const userBubble: TextBubble = {
+        kind: "text",
+        key: uid(),
+        role: "user",
+        content: text,
+        streaming: false,
+      };
+      setBubbles((prev) => [...prev, userBubble]);
 
-      // ── Open WebSocket ──────────────────────────────────────────────────
-      setStatus("connecting");
+      updateStatus("connecting");
 
-      // Use wss:// when page is served over https
       const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(
-        `${wsProtocol}://${location.host}/ws/${conversationId}`
+        `${wsProtocol}://${location.host}/ws/${conversationId}`,
       );
       wsRef.current = ws;
 
       ws.addEventListener("open", () => {
-        // Step 1: auth handshake
         ws.send(JSON.stringify({ token }));
-        // Step 2: user message
         ws.send(JSON.stringify({ content: text }));
-        setStatus("streaming");
-
-        // Prepare an empty assistant bubble to stream into
-        const assistantKey = uid();
-        streamKeyRef.current = assistantKey;
-        setBubbles((prev) => [
-          ...prev,
-          {
-            key: assistantKey,
-            role: "assistant",
-            content: "",
-            streaming: true,
-          },
-        ]);
+        updateStatus("streaming");
+        // Don't pre-create an assistant bubble here — we create it lazily
+        // on the first token, so the order is always correct.
       });
 
       ws.addEventListener("message", (ev) => {
@@ -93,83 +139,98 @@ export function useChat(conversationId: string | null, token: string | null) {
         }
 
         if (event.type === "token") {
-          const key = streamKeyRef.current;
-          if (!key) return;
+          // Append to the current active text segment, creating one if needed.
+          const key = ensureActiveText();
           setBubbles((prev) =>
             prev.map((b) =>
-              b.key === key ? { ...b, content: b.content + event.content } : b
-            )
+              b.key === key && b.kind === "text"
+                ? { ...b, content: b.content + event.content }
+                : b,
+            ),
           );
+        } else if (event.type === "tool_call") {
+          // Seal whatever text came before this tool call.
+          sealActiveText();
+
+          const toolBubble: ToolBubble = {
+            kind: "tool",
+            key: `tool-${event.id}`,
+            role: "tool",
+            name: event.name,
+            args: event.args,
+            result: null,
+            pending: true,
+          };
+          setBubbles((prev) => [...prev, toolBubble]);
+
+          // The next tokens after the tool result will open a fresh text segment.
+        } else if (event.type === "tool_result") {
+          setBubbles((prev) =>
+            prev.map((b) =>
+              b.key === `tool-${event.id}` && b.kind === "tool"
+                ? { ...b, result: event.result, pending: false }
+                : b,
+            ),
+          );
+          // After a tool result the agent may emit more tokens — ensureActiveText
+          // will create a new text bubble for them automatically.
         } else if (event.type === "done") {
-          // Mark the streaming bubble as complete
-          const key = streamKeyRef.current;
-          if (key) {
-            setBubbles((prev) =>
-              prev.map((b) => (b.key === key ? { ...b, streaming: false } : b))
-            );
-            streamKeyRef.current = null;
-          }
-          setStatus("idle");
-          ws.close();
+          sealActiveText();
+          updateStatus("idle");
+          ws.close(1000);
           wsRef.current = null;
         } else if (event.type === "error") {
-          const key = streamKeyRef.current;
+          // Remove the current (possibly empty) active text bubble on error.
+          const key = activeTextKeyRef.current;
           if (key) {
-            // Remove the empty / partial assistant bubble on error
             setBubbles((prev) => prev.filter((b) => b.key !== key));
-            streamKeyRef.current = null;
+            activeTextKeyRef.current = null;
           }
-          setStatus("error");
+          updateStatus("error");
           setErrorMsg(event.message);
-          ws.close();
+          ws.close(1000);
           wsRef.current = null;
         }
-        // tool_call and tool_result events are silently ignored in the UI
-        // (they are internal agent mechanics)
       });
 
       ws.addEventListener("error", () => {
-        const key = streamKeyRef.current;
+        const key = activeTextKeyRef.current;
         if (key) {
           setBubbles((prev) => prev.filter((b) => b.key !== key));
-          streamKeyRef.current = null;
+          activeTextKeyRef.current = null;
         }
-        setStatus("error");
+        updateStatus("error");
         setErrorMsg("连接出错，请重试");
         wsRef.current = null;
       });
 
       ws.addEventListener("close", (ev) => {
-        // Abnormal close (code !== 1000 / 1001) that wasn't already handled
-        if (ev.code !== 1000 && ev.code !== 1001) {
-          const key = streamKeyRef.current;
+        wsRef.current = null;
+        // Only treat as an error if the close was abnormal AND we are still
+        // in the streaming state (i.e. done/error has not already handled it).
+        if (
+          ev.code !== 1000 &&
+          ev.code !== 1001 &&
+          statusRef.current === "streaming"
+        ) {
+          const key = activeTextKeyRef.current;
           if (key) {
             setBubbles((prev) => prev.filter((b) => b.key !== key));
-            streamKeyRef.current = null;
+            activeTextKeyRef.current = null;
           }
-          if (status !== "error") {
-            setStatus("error");
-            setErrorMsg("连接已断开");
-          }
+          updateStatus("error");
+          setErrorMsg("连接已断开，请重试");
         }
-        wsRef.current = null;
       });
     },
-    [conversationId, token, status]
+    [conversationId, token],
   );
 
   const abort = useCallback(() => {
-    wsRef.current?.close();
+    wsRef.current?.close(1000);
     wsRef.current = null;
-    const key = streamKeyRef.current;
-    if (key) {
-      // Keep whatever was streamed so far, just mark as no longer streaming
-      setBubbles((prev) =>
-        prev.map((b) => (b.key === key ? { ...b, streaming: false } : b))
-      );
-      streamKeyRef.current = null;
-    }
-    setStatus("idle");
+    sealActiveText();
+    updateStatus("idle");
   }, []);
 
   return {

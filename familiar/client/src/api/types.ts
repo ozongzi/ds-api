@@ -59,9 +59,7 @@ export interface Message {
 
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
-export type WsClientMsg =
-  | { token: string }
-  | { content: string };
+export type WsClientMsg = { token: string } | { content: string };
 
 export type WsServerEvent =
   | { type: "token"; content: string }
@@ -72,17 +70,28 @@ export type WsServerEvent =
 
 // ─── UI-only chat bubble ──────────────────────────────────────────────────
 
-export type BubbleRole = "user" | "assistant";
+export type BubbleRole = "user" | "assistant" | "tool";
 
-export interface ChatBubble {
-  /** Unique key for React list rendering */
+export interface TextBubble {
+  kind: "text";
   key: string;
-  role: BubbleRole;
-  /** Accumulated text content */
+  role: "user" | "assistant";
   content: string;
-  /** Whether this bubble is still being streamed */
   streaming: boolean;
 }
+
+export interface ToolBubble {
+  kind: "tool";
+  key: string;
+  role: "tool";
+  name: string;
+  args: unknown;
+  result: unknown | null;
+  /** Still waiting for the tool_result event */
+  pending: boolean;
+}
+
+export type ChatBubble = TextBubble | ToolBubble;
 
 // ─── API error shape ──────────────────────────────────────────────────────
 

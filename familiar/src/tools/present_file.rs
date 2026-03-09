@@ -5,29 +5,33 @@ pub struct PresentFileTool;
 
 #[tool]
 impl Tool for PresentFileTool {
-    /// 将服务器上的文件作为附件发送到 Discord 频道。
+    /// 将服务器上的文件提供给用户下载。
     /// 适合展示代码、日志、生成的图片等任何文件。
-    /// path: 要发送的文件的绝对路径或相对路径
+    /// path: 要下载的文件的绝对路径或相对路径
     async fn present_file(&self, path: String) -> Value {
-        match tokio::fs::read(&path).await {
-            Ok(bytes) => {
-                let filename = std::path::Path::new(&path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("file")
-                    .to_string();
-                // 把文件内容 base64 编码后返回，让 bot 层识别并上传
-                let encoded = BASE64.encode(&bytes);
-                json!({
-                    "upload": true,
-                    "filename": filename,
-                    "data_base64": encoded,
-                    "size": bytes.len(),
-                })
-            }
-            Err(e) => json!({ "error": e.to_string() }),
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(m) => m,
+            Err(e) => return json!({ "error": e.to_string() }),
+        };
+
+        if !metadata.is_file() {
+            return json!({ "error": format!("'{}' 不是一个文件", path) });
         }
+
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+
+        // Return metadata only — the web layer exposes a /api/files endpoint
+        // that accepts `path` as a query parameter, verifies the session token,
+        // and streams the file with Content-Disposition: attachment.
+        json!({
+            "display": "file",
+            "filename": filename,
+            "path": path,
+            "size": metadata.len(),
+        })
     }
 }
-
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};

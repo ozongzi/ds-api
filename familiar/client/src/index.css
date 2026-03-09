@@ -1,35 +1,45 @@
 /* ─── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
-    --bg-base: #0f0f17;
-    --bg-surface: #16161f;
-    --bg-elevated: #1e1e2a;
-    --bg-hover: #252533;
-    --bg-active: #2d2d3e;
+    /* Backgrounds */
+    --bg-base: #f7f5ef;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0ede6;
+    --bg-hover: #ebe7de;
+    --bg-active: #e4dfd4;
 
-    --border: #2a2a3a;
-    --border-subtle: #222230;
+    /* Borders */
+    --border: #ddd8ce;
+    --border-subtle: #e8e4db;
 
-    --text-primary: #e8e8f0;
-    --text-secondary: #9090aa;
-    --text-muted: #5a5a72;
-    --text-link: #8b7cf8;
+    /* Text */
+    --text-primary: #1a1915;
+    --text-secondary: #6b6651;
+    --text-muted: #a09880;
+    --text-link: #b85c3a;
 
-    --accent: #7c6af7;
-    --accent-dim: #4a3fa0;
-    --accent-glow: rgba(124, 106, 247, 0.18);
+    /* Accent — Claude's warm terracotta/orange-brown */
+    --accent: #c96442;
+    --accent-dim: #f5ede8;
+    --accent-glow: rgba(201, 100, 66, 0.12);
+    --accent-hover: #b85539;
 
-    --danger: #e05c6a;
-    --danger-dim: rgba(224, 92, 106, 0.15);
+    /* Danger */
+    --danger: #c0392b;
+    --danger-dim: rgba(192, 57, 43, 0.08);
 
-    --success: #4ade80;
+    /* Success */
+    --success: #2d7a4f;
 
+    /* Radius */
     --radius-sm: 6px;
     --radius-md: 10px;
-    --radius-lg: 16px;
+    --radius-lg: 18px;
 
+    /* Typography */
     --font-sans: "Noto Sans SC", system-ui, -apple-system, sans-serif;
     --font-mono: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
 
+    /* Layout */
     --sidebar-width: 260px;
     --header-height: 52px;
 
@@ -108,6 +118,7 @@ textarea {
     line-height: 1.75;
     word-break: break-word;
     overflow-wrap: break-word;
+    color: var(--text-primary);
 }
 
 .prose p {
@@ -125,7 +136,7 @@ textarea {
 .prose h6 {
     font-weight: 600;
     line-height: 1.35;
-    margin: 1.1em 0 0.45em;
+    margin: 1.2em 0 0.5em;
     color: var(--text-primary);
 }
 .prose h1 {
@@ -144,15 +155,15 @@ textarea {
     margin-bottom: 0.75em;
 }
 .prose li {
-    margin-bottom: 0.2em;
+    margin-bottom: 0.25em;
 }
 
 .prose blockquote {
-    border-left: 3px solid var(--accent-dim);
+    border-left: 3px solid var(--accent);
     padding: 0.3em 0.9em;
     color: var(--text-secondary);
     margin: 0.75em 0;
-    background: var(--bg-elevated);
+    background: var(--accent-dim);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
@@ -179,7 +190,7 @@ textarea {
     font-weight: 600;
 }
 .prose tr:nth-child(even) td {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--bg-base);
 }
 
 .prose a {
@@ -201,30 +212,30 @@ textarea {
 /* inline code */
 .prose code {
     font-family: var(--font-mono);
-    font-size: 0.88em;
+    font-size: 0.875em;
     background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border);
     padding: 0.15em 0.4em;
     border-radius: var(--radius-sm);
-    color: #c4b5fd;
+    color: #8b3a1c;
 }
 
 /* code blocks */
 .prose pre {
-    background: #0d0d14;
-    border: 1px solid var(--border);
+    background: #2b2620;
+    border: 1px solid #3d3530;
     border-radius: var(--radius-md);
     padding: 1em 1.2em;
     overflow-x: auto;
     margin: 0.8em 0;
-    font-size: 0.88em;
-    line-height: 1.6;
+    font-size: 0.875em;
+    line-height: 1.65;
 }
 .prose pre code {
     background: none;
     border: none;
     padding: 0;
-    color: #e0d9ff;
+    color: #e8ddd4;
     font-size: inherit;
 }
 

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod conversations;
+pub mod files;
 pub mod history;
 pub mod sessions;
 pub mod users;
@@ -16,6 +17,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use conversations::*;
+use files::*;
 use history::*;
 use sessions::*;
 use users::*;
@@ -59,6 +61,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/conversations/{id}", patch(rename_conversation))
         // ── Messages ──────────────────────────────────────────────────────────
         .route("/api/conversations/{id}/messages", get(list_messages))
+        // ── File download ─────────────────────────────────────────────────────
+        .route("/api/files", get(download_file))
         // ── WebSocket ─────────────────────────────────────────────────────────
         .route("/ws/{id}", get(ws_handler))
         // ── Static frontend ───────────────────────────────────────────────────

@@ -4,7 +4,7 @@
     width: var(--sidebar-width);
     min-width: var(--sidebar-width);
     height: 100%;
-    background: var(--bg-surface);
+    background: var(--bg-elevated);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -43,7 +43,9 @@
     align-items: center;
     justify-content: center;
     color: var(--text-secondary);
-    transition: background var(--transition), color var(--transition);
+    transition:
+        background var(--transition),
+        color var(--transition);
     flex-shrink: 0;
 }
 
@@ -89,7 +91,6 @@
     cursor: pointer;
     transition: background var(--transition);
     outline: none;
-    /* Prevent text selection on double click */
     user-select: none;
 }
 
@@ -137,7 +138,7 @@
 
 .renameInput {
     flex: 1;
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     padding: 3px 7px;
@@ -156,7 +157,6 @@
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
-    /* Hidden until hover or active */
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--transition);
@@ -176,12 +176,14 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted);
-    transition: background var(--transition), color var(--transition);
+    transition:
+        background var(--transition),
+        color var(--transition);
     flex-shrink: 0;
 }
 
 .actionBtn:hover {
-    background: var(--bg-elevated);
+    background: var(--border);
     color: var(--text-primary);
 }
 
@@ -206,7 +208,7 @@
     padding: 0 10px 0 14px;
     height: 52px;
     border-top: 1px solid var(--border-subtle);
-    background: var(--bg-surface);
+    background: var(--bg-elevated);
 }
 
 .userName {
@@ -230,7 +232,9 @@
     align-items: center;
     justify-content: center;
     color: var(--text-muted);
-    transition: background var(--transition), color var(--transition);
+    transition:
+        background var(--transition),
+        color var(--transition);
 }
 
 .logoutBtn:hover {
