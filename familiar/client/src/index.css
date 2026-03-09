@@ -36,8 +36,8 @@
     --radius-lg: 18px;
 
     /* Typography */
-    --font-sans: "Noto Sans SC", system-ui, -apple-system, sans-serif;
-    --font-mono: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+    --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+    --font-mono: "Geist Mono", "Cascadia Code", "JetBrains Mono", monospace;
 
     /* Layout */
     --sidebar-width: 260px;
@@ -214,11 +214,11 @@ textarea {
 .prose code:not(pre code) {
     font-family: var(--font-mono);
     font-size: 0.875em;
-    background: rgba(110, 86, 207, 0.12);
-    border: 1px solid rgba(110, 86, 207, 0.25);
+    background: #ede9e0;
+    border: 1px solid #d8d3c8;
     padding: 0.15em 0.42em;
     border-radius: 4px;
-    color: #c4b5fd;
+    color: #3d3929;
     white-space: nowrap;
 }
 
@@ -228,8 +228,8 @@ textarea {
     margin: 0.9em 0;
     border-radius: var(--radius-md);
     overflow: hidden;
-    border: 1px solid #2d2d3d;
-    background: #1a1a27;
+    border: 1px solid #d8d3c8;
+    background: #f5f2ec;
     font-size: 0.875em;
 }
 
@@ -239,8 +239,8 @@ textarea {
     align-items: center;
     justify-content: space-between;
     padding: 7px 14px;
-    background: #222233;
-    border-bottom: 1px solid #2d2d3d;
+    background: #ede9e0;
+    border-bottom: 1px solid #d8d3c8;
     min-height: 36px;
     gap: 8px;
 }
@@ -248,7 +248,7 @@ textarea {
 .prose .code-lang {
     font-family: var(--font-mono);
     font-size: 0.82em;
-    color: #8b8baa;
+    color: #7a7465;
     letter-spacing: 0.03em;
     text-transform: lowercase;
 }
@@ -260,9 +260,9 @@ textarea {
     gap: 5px;
     padding: 3px 9px;
     border-radius: 5px;
-    border: 1px solid #3a3a50;
+    border: 1px solid #ccc8be;
     background: transparent;
-    color: #8b8baa;
+    color: #7a7465;
     font-family: var(--font-sans);
     font-size: 0.8em;
     cursor: pointer;
@@ -276,15 +276,15 @@ textarea {
 }
 
 .prose .code-copy-btn:hover {
-    background: #2d2d3d;
-    color: #c4b5fd;
-    border-color: #5a4fd0;
+    background: #e4dfd4;
+    color: #3d3929;
+    border-color: #b0a99a;
 }
 
 .prose .code-copy-btn.copied {
-    color: #4ade80;
-    border-color: #166534;
-    background: rgba(74, 222, 128, 0.08);
+    color: #2d7a4f;
+    border-color: #a3d4b8;
+    background: rgba(45, 122, 79, 0.08);
 }
 
 /* Code area */
@@ -292,7 +292,7 @@ textarea {
     margin: 0;
     padding: 14px 16px;
     overflow-x: auto;
-    background: #1a1a27;
+    background: #f5f2ec;
     line-height: 1.65;
 }
 
@@ -302,15 +302,15 @@ textarea {
     background: none;
     border: none;
     padding: 0;
-    color: #cdd6f4;
+    color: #2e2b26;
     white-space: pre;
 }
 
-/* ─── Highlight.js token colors (Catppuccin-ish dark) ────────────────────── */
+/* ─── Highlight.js token colors (Claude-style warm light) ───────────────── */
 
 .hljs-comment,
 .hljs-quote {
-    color: #6c7086;
+    color: #9a9182;
     font-style: italic;
 }
 .hljs-keyword,
@@ -318,7 +318,7 @@ textarea {
 .hljs-built_in,
 .hljs-name,
 .hljs-tag {
-    color: #cba6f7;
+    color: #9b3b8a;
 }
 .hljs-string,
 .hljs-title,
@@ -328,39 +328,38 @@ textarea {
 .hljs-template-tag,
 .hljs-template-variable,
 .hljs-type {
-    color: #a6e3a1;
+    color: #2d7a4f;
 }
 .hljs-number,
 .hljs-regexp,
 .hljs-symbol,
-.hljs-variable,
-.hljs-deletion {
-    color: #fab387;
+.hljs-variable {
+    color: #b85c1a;
 }
 .hljs-function,
 .hljs-title.function_,
 .hljs-selector-id,
 .hljs-selector-class {
-    color: #89dceb;
+    color: #1a5fa6;
 }
 .hljs-meta,
 .hljs-meta .hljs-string {
-    color: #f9e2af;
+    color: #7a5c1e;
 }
 .hljs-operator,
 .hljs-punctuation {
-    color: #89b4fa;
+    color: #5a5349;
 }
 .hljs-params {
-    color: #cdd6f4;
+    color: #3d3929;
 }
 .hljs-attr,
 .hljs-property {
-    color: #89b4fa;
+    color: #1a5fa6;
 }
 .hljs-class .hljs-title,
 .hljs-title.class_ {
-    color: #f38ba8;
+    color: #a63030;
 }
 .hljs-emphasis {
     font-style: italic;
@@ -369,12 +368,12 @@ textarea {
     font-weight: bold;
 }
 .hljs-addition {
-    color: #a6e3a1;
-    background: rgba(166, 227, 161, 0.08);
+    color: #2d7a4f;
+    background: rgba(45, 122, 79, 0.1);
 }
 .hljs-deletion {
-    color: #f38ba8;
-    background: rgba(243, 139, 168, 0.08);
+    color: #a63030;
+    background: rgba(166, 48, 48, 0.1);
 }
 
 /* ─── Utility ────────────────────────────────────────────────────────────── */

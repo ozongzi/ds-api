@@ -478,7 +478,7 @@
 /* ─── Code preview inside file card ─────────────────────────────────────── */
 
 .filePreviewCode {
-    background: #1a1a27;
+    background: #f5f2ec;
 }
 
 .filePreviewCodeHeader {
@@ -486,15 +486,15 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 14px;
-    background: #222233;
-    border-bottom: 1px solid #2d2d3d;
+    background: #ede9e0;
+    border-bottom: 1px solid #d8d3c8;
     min-height: 32px;
 }
 
 .filePreviewLang {
     font-family: var(--font-mono);
     font-size: 0.8em;
-    color: #8b8baa;
+    color: #7a7465;
     letter-spacing: 0.03em;
 }
 
@@ -509,7 +509,7 @@
     overflow-x: auto;
     overflow-y: auto;
     max-height: 480px;
-    background: #1a1a27;
+    background: #f5f2ec;
     font-family: var(--font-mono);
     font-size: 0.855em;
     line-height: 1.65;
@@ -519,7 +519,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: #cdd6f4;
+    color: #2e2b26;
     white-space: pre;
     font-size: inherit;
 }
