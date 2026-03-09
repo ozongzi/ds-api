@@ -1,0 +1,242 @@
+/* ─── CSS Variables ──────────────────────────────────────────────────────── */
+:root {
+    --bg-base: #0f0f17;
+    --bg-surface: #16161f;
+    --bg-elevated: #1e1e2a;
+    --bg-hover: #252533;
+    --bg-active: #2d2d3e;
+
+    --border: #2a2a3a;
+    --border-subtle: #222230;
+
+    --text-primary: #e8e8f0;
+    --text-secondary: #9090aa;
+    --text-muted: #5a5a72;
+    --text-link: #8b7cf8;
+
+    --accent: #7c6af7;
+    --accent-dim: #4a3fa0;
+    --accent-glow: rgba(124, 106, 247, 0.18);
+
+    --danger: #e05c6a;
+    --danger-dim: rgba(224, 92, 106, 0.15);
+
+    --success: #4ade80;
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+
+    --font-sans: "Noto Sans SC", system-ui, -apple-system, sans-serif;
+    --font-mono: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+
+    --sidebar-width: 260px;
+    --header-height: 52px;
+
+    --transition: 140ms ease;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background: var(--bg-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--text-link);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    background: none;
+}
+
+input,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    outline: none;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--bg-active);
+}
+
+/* ─── Markdown prose ─────────────────────────────────────────────────────── */
+.prose {
+    line-height: 1.75;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+
+.prose p {
+    margin-bottom: 0.75em;
+}
+.prose p:last-child {
+    margin-bottom: 0;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 1.1em 0 0.45em;
+    color: var(--text-primary);
+}
+.prose h1 {
+    font-size: 1.45em;
+}
+.prose h2 {
+    font-size: 1.25em;
+}
+.prose h3 {
+    font-size: 1.1em;
+}
+
+.prose ul,
+.prose ol {
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+}
+.prose li {
+    margin-bottom: 0.2em;
+}
+
+.prose blockquote {
+    border-left: 3px solid var(--accent-dim);
+    padding: 0.3em 0.9em;
+    color: var(--text-secondary);
+    margin: 0.75em 0;
+    background: var(--bg-elevated);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.prose hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.2em 0;
+}
+
+.prose table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.75em;
+    font-size: 0.93em;
+}
+.prose th,
+.prose td {
+    padding: 0.4em 0.8em;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+.prose th {
+    background: var(--bg-elevated);
+    font-weight: 600;
+}
+.prose tr:nth-child(even) td {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.prose a {
+    color: var(--text-link);
+}
+.prose a:hover {
+    text-decoration: underline;
+}
+
+.prose strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.prose em {
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* inline code */
+.prose code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    padding: 0.15em 0.4em;
+    border-radius: var(--radius-sm);
+    color: #c4b5fd;
+}
+
+/* code blocks */
+.prose pre {
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1em 1.2em;
+    overflow-x: auto;
+    margin: 0.8em 0;
+    font-size: 0.88em;
+    line-height: 1.6;
+}
+.prose pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #e0d9ff;
+    font-size: inherit;
+}
+
+/* ─── Utility ────────────────────────────────────────────────────────────── */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}

@@ -1,3 +1,6 @@
 target/
 .ds_api_workspace_notes
 **/.env
+rpg_stage/
+**/node_modules/
+**/dist/

@@ -1,11 +1,4 @@
-/// Runtime configuration loaded from environment variables.
-///
-/// Set variables directly or place them in a `.env` file — `dotenvy` loads it
-/// automatically before `from_env()` reads them.
 pub struct Config {
-    /// Discord Bot token (from the Developer Portal).
-    pub discord_token: String,
-
     /// DeepSeek API key.
     pub deepseek_token: String,
 
@@ -15,26 +8,26 @@ pub struct Config {
     /// Optional system prompt prepended to every conversation.
     pub system_prompt: Option<String>,
 
-    /// Path to the SQLite database file. Default: `familiar.db`
-    pub db_path: String,
+    /// PostgreSQL connection URL. e.g. postgres://user:pass@localhost/familiar
+    pub database_url: String,
+
+    /// Port to listen on. Default: 3000
+    pub port: u16,
 }
 
 impl Config {
-    /// Load configuration from the process environment.
-    ///
-    /// Attempts to read a `.env` file in the current directory first (via
-    /// `dotenvy`), then reads the actual environment.  Missing required
-    /// variables panic with a clear message so misconfiguration is caught at
-    /// startup rather than at first use.
     pub fn from_env() -> Self {
         let _ = dotenvy::dotenv();
 
         Self {
-            discord_token: required("DISCORD_TOKEN"),
             deepseek_token: required("DEEPSEEK_API_KEY"),
             openrouter_token: required("OPENROUTER_API_KEY"),
             system_prompt: std::env::var("SYSTEM_PROMPT").ok(),
-            db_path: std::env::var("DB_PATH").unwrap_or_else(|_| "familiar.db".to_string()),
+            database_url: required("DATABASE_URL"),
+            port: std::env::var("PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3000),
         }
     }
 }

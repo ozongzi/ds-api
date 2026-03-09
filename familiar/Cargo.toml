@@ -1,6 +1,6 @@
 [package]
 name = "familiar"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [[bin]]
@@ -10,14 +10,11 @@ path = "src/main.rs"
 [dependencies]
 ds-api = { path = "../ds-api" }
 
-# Discord
-serenity = { version = "0.12", default-features = false, features = [
-    "client",
-    "gateway",
-    "model",
-    "http",
-    "rustls_backend",
-] }
+# Web
+axum = { version = "0.8", features = ["macros", "ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower = { version = "0.5" }
 
 # Async
 tokio = { version = "1", features = ["full"] }
@@ -30,9 +27,20 @@ serde_json = "1"
 base64 = "0.22"
 
 # Database
-rusqlite = { version = "0.31", features = ["bundled"] }
-tokio-rusqlite = "0.5"
-anyhow = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "macros",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+] }
+pgvector = { version = "0.4", features = ["sqlx"] }
+
+# Auth
+bcrypt = "0.17"
+uuid = { version = "1", features = ["serde", "v4"] }
 
 # HTTP client (embedding API)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -43,3 +51,9 @@ dotenvy = "0.15"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Error handling
+anyhow = "1"
+
+# Random token generation
+getrandom = "0.2"

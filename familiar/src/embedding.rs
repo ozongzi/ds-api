@@ -62,16 +62,3 @@ impl EmbeddingClient {
             .ok_or_else(|| anyhow::anyhow!("empty embedding response"))
     }
 }
-
-/// Cosine similarity between two equal-length vectors.
-/// Returns a value in [-1, 1]; higher = more similar.
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
-}

@@ -1,12 +1,14 @@
-mod bot;
 mod config;
 mod db;
 mod embedding;
+mod errors;
 mod state;
 mod tools;
+mod web;
 
 use std::sync::Arc;
 
+use sqlx::postgres::PgPoolOptions;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -22,13 +24,37 @@ async fn main() {
 
     info!("familiar starting");
 
-    let db: db::Db = db::Db::open(&cfg.db_path)
+    // ── Database ──────────────────────────────────────────────────────────────
+
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&cfg.database_url)
         .await
-        .unwrap_or_else(|e| panic!("failed to open database at {}: {e}", cfg.db_path));
+        .unwrap_or_else(|e| panic!("failed to connect to database: {e}"));
 
-    info!(path = %cfg.db_path, "database opened");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("migration failed: {e}"));
 
-    let state = Arc::new(state::AppState::new(&cfg, db));
+    info!("database connected and migrations applied");
 
-    bot::run(&cfg.discord_token, state).await;
+    // ── App state ─────────────────────────────────────────────────────────────
+
+    let state = Arc::new(state::AppState::new(&cfg, pool));
+    let web_state = web::AppState(Arc::clone(&state));
+
+    // ── Web server ────────────────────────────────────────────────────────────
+
+    let router = web::create_router(web_state);
+    let addr = format!("0.0.0.0:{}", cfg.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
+
+    info!(addr = %addr, "listening");
+
+    axum::serve(listener, router)
+        .await
+        .unwrap_or_else(|e| panic!("server error: {e}"));
 }
