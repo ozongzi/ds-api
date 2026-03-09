@@ -25,6 +25,9 @@ export function useChat(conversationId: string | null, token: string | null) {
   const wsLiveRef = useRef<WebSocket | null>(null);
   // Track which conversationId we last attached to, to avoid double-attach.
   const attachedConvRef = useRef<string | null>(null);
+  // True while a reattach WS is open but generation has not yet started
+  // (status is still "idle"). Used by send() to detect and close it first.
+  const reattachingRef = useRef(false);
 
   // Key of the assistant TextBubble that is currently accumulating tokens.
   // null means no active text segment yet (next token will create one).
@@ -246,6 +249,7 @@ export function useChat(conversationId: string | null, token: string | null) {
     wsLiveRef.current = ws;
 
     ws.addEventListener("open", () => {
+      reattachingRef.current = true;
       ws.send(JSON.stringify({ token }));
       ws.send(JSON.stringify({ type: "reattach" }));
     });
@@ -266,11 +270,13 @@ export function useChat(conversationId: string | null, token: string | null) {
         event.type !== "aborted" &&
         event.type !== "error"
       ) {
+        reattachingRef.current = false;
         updateStatus("streaming");
       }
 
       const finished = processEvent(event);
       if (finished) {
+        reattachingRef.current = false;
         ws.close(1000);
         wsRef.current = null;
         wsLiveRef.current = null;
@@ -278,11 +284,13 @@ export function useChat(conversationId: string | null, token: string | null) {
     });
 
     ws.addEventListener("error", () => {
+      reattachingRef.current = false;
       wsRef.current = null;
       wsLiveRef.current = null;
     });
 
     ws.addEventListener("close", () => {
+      reattachingRef.current = false;
       wsRef.current = null;
       wsLiveRef.current = null;
     });
@@ -311,6 +319,20 @@ export function useChat(conversationId: string | null, token: string | null) {
         statusRef.current === "streaming"
       )
         return;
+
+      // 关闭 reattach 阶段可能留下的静默连接，避免两个 WS 同时追加 token。
+      // reattachingRef 标记的是"已建连但 generation 尚未开始"的静默连接；
+      // 如果 generation 已经在跑（streaming），send 在函数开头就已被拦截。
+      if (reattachingRef.current) {
+        const existing = wsLiveRef.current;
+        if (existing && existing.readyState === WebSocket.OPEN) {
+          existing.close(1000);
+        }
+        reattachingRef.current = false;
+        wsRef.current = null;
+        wsLiveRef.current = null;
+        attachedConvRef.current = null;
+      }
 
       setErrorMsg(null);
       activeTextKeyRef.current = null;

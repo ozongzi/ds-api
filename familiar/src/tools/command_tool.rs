@@ -10,9 +10,14 @@ pub struct CommandTool;
 impl Tool for CommandTool {
     /// 跨平台执行终端命令
     /// command: 需要执行的终端命令
-    async fn execute(&self, command: String) -> Value {
+    /// cwd: 工作目录（可选），不传则使用服务器默认目录
+    async fn execute(&self, command: String, cwd: Option<String>) -> Value {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&command);
+
+        if let Some(dir) = cwd {
+            cmd.current_dir(&dir);
+        }
 
         let output = match cmd.output().await {
             Ok(o) => o,
