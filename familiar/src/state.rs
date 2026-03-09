@@ -13,7 +13,9 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
-use crate::tools::{CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool};
+use crate::tools::{
+    A2aTool, CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool, SelfUpdateTool,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // How many events to keep in the log for late-joining clients.
@@ -181,6 +183,8 @@ impl AppState {
             .add_tool(FileTool)
             .add_tool(ScriptTool)
             .add_tool(PresentFileTool)
+            .add_tool(A2aTool)
+            .add_tool(SelfUpdateTool)
             .add_tool(HistoryTool {
                 db: self.db.clone(),
                 embed: self.embed.clone(),

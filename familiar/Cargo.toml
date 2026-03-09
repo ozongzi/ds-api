@@ -57,3 +57,6 @@ anyhow = "1"
 
 # Random token generation
 getrandom = "0.2"
+# A2A — core types only (a2a-rs-client pulls in native-tls which breaks musl cross-compile;
+# we implement the thin HTTP calls ourselves using the existing reqwest + rustls-tls dep)
+a2a-rs-core = "1.0.0"

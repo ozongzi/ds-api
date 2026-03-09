@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "a2a-rs-core"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e86b2c17b4ea4740e9affdc8b9c6c16e569813713562d4a136fc51fefd86b39c"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +671,7 @@ dependencies = [
 name = "familiar"
 version = "0.2.0"
 dependencies = [
+ "a2a-rs-core",
  "anyhow",
  "async-trait",
  "axum",

@@ -1,14 +1,18 @@
+mod a2a_tool;
 mod command_tool;
 mod file_tool;
 mod history_tool;
 mod present_file;
 mod script_tool;
+mod self_update_tool;
 
+pub use a2a_tool::A2aTool;
 pub use command_tool::CommandTool;
 pub use file_tool::FileTool;
 pub use history_tool::HistoryTool;
 pub use present_file::PresentFileTool;
 pub use script_tool::ScriptTool;
+pub use self_update_tool::SelfUpdateTool;
 
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
 
