@@ -7,6 +7,7 @@ interface Props {
   oldStr?: string; // str_replace: old_str
   newStr: string; // str_replace: new_str, or write: content
   mode: "str_replace" | "write";
+  streaming?: boolean; // 流式期间禁用 unchanged 行折叠
 }
 
 interface DiffLine {
@@ -71,7 +72,13 @@ function writeLines(newStr: string): DiffLine[] {
   }));
 }
 
-export function DiffView({ path, oldStr, newStr, mode }: Props) {
+export function DiffView({
+  path,
+  oldStr,
+  newStr,
+  mode,
+  streaming = false,
+}: Props) {
   const lines = useMemo<DiffLine[]>(() => {
     if (mode === "write" || oldStr === undefined) {
       return writeLines(newStr);
@@ -86,6 +93,7 @@ export function DiffView({ path, oldStr, newStr, mode }: Props) {
   const CONTEXT = 3;
   const visible = useMemo(() => {
     if (mode === "write") return lines; // all lines are added, show all
+    if (streaming) return lines; // 流式期间不折叠，避免 new_str 未完整时 unchanged 行被隐藏
     const changed = new Set<number>();
     lines.forEach((l, i) => {
       if (l.type !== "unchanged") changed.add(i);
