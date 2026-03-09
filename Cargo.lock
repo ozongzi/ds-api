@@ -3,22 +3,6 @@
 version = 4
 
 [[package]]
-name = "agent-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "dotenvy",
- "ds-api",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,6 +364,23 @@ dependencies = [
  "futures-core",
  "nom",
  "pin-project-lite",
+]
+
+[[package]]
+name = "familiar"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "dotenvy",
+ "ds-api",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

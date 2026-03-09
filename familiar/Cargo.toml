@@ -1,10 +1,10 @@
 [package]
-name = "agent-server"
+name = "familiar"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "agent-server"
+name = "familiar"
 path = "src/main.rs"
 
 [dependencies]
@@ -23,6 +23,7 @@ serde_json = "1"
 
 # Async
 futures = "0.3"
+async-trait = "0.1"
 
 # Config / env
 dotenvy = "0.15"

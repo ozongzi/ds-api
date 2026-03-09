@@ -1,2 +1,3 @@
 target/
 .ds_api_workspace_notes
+**/.env

@@ -5,6 +5,7 @@ use ds_api::DeepseekAgent;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::config::Config;
+use crate::tools::{CommandTool, FileTool, ScriptTool};
 
 /// One entry per Telegram chat ID.
 ///
@@ -51,7 +52,11 @@ impl AppState {
     /// and system prompt.  The interrupt channel is wired up and the sender is
     /// returned alongside the agent so the caller can store it in `ChatEntry`.
     pub fn build_agent(&self) -> (DeepseekAgent, UnboundedSender<String>) {
-        let mut builder = DeepseekAgent::new(self.deepseek_token.clone()).with_streaming();
+        let mut builder = DeepseekAgent::new(self.deepseek_token.clone())
+            .with_streaming()
+            .add_tool(CommandTool)
+            .add_tool(FileTool)
+            .add_tool(ScriptTool);
 
         if let Some(prompt) = &self.system_prompt {
             builder = builder.with_system_prompt(prompt.clone());

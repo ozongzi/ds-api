@@ -1,4 +1,4 @@
-# agent-server
+# familiar
 
 A personal AI agent that runs on your Linux server and lets you chat from your iPhone via Telegram.
 
@@ -17,7 +17,7 @@ Telegram Bot API
   │
   │  POST /webhook  (your server must be reachable over HTTPS)
   ▼
-agent-server (axum)
+familiar (axum)
   │
   ├─ per-chat DeepseekAgent (conversation history preserved)
   └─ tools registered via #[tool]
@@ -62,10 +62,10 @@ WEBHOOK_SECRET=<output of: openssl rand -hex 32>
 
 ```bash
 # From the workspace root
-cargo build --release -p agent-server
+cargo build --release -p familiar
 ```
 
-The binary is at `target/release/agent-server`.
+The binary is at `target/release/familiar`.
 
 ### 3. Register the Telegram webhook
 
@@ -91,13 +91,13 @@ curl "https://api.telegram.org/bot<TELEGRAM_TOKEN>/getWebhookInfo"
 ### 4. Run
 
 ```bash
-./target/release/agent-server
+./target/release/familiar
 ```
 
 Or with environment variables inline:
 
 ```bash
-TELEGRAM_TOKEN=... DEEPSEEK_API_KEY=... ./target/release/agent-server
+TELEGRAM_TOKEN=... DEEPSEEK_API_KEY=... ./target/release/familiar
 ```
 
 ---
@@ -107,23 +107,23 @@ TELEGRAM_TOKEN=... DEEPSEEK_API_KEY=... ./target/release/agent-server
 ### 1. Copy the binary
 
 ```bash
-sudo cp target/release/agent-server /usr/local/bin/agent-server
-sudo chmod +x /usr/local/bin/agent-server
+sudo cp target/release/familiar /usr/local/bin/familiar
+sudo chmod +x /usr/local/bin/familiar
 ```
 
 ### 2. Create the environment file
 
 ```bash
-sudo mkdir -p /etc/agent-server
-sudo cp .env.example /etc/agent-server/.env
-sudo nano /etc/agent-server/.env   # fill in your values
-sudo chmod 600 /etc/agent-server/.env
+sudo mkdir -p /etc/familiar
+sudo cp .env.example /etc/familiar/.env
+sudo nano /etc/familiar/.env   # fill in your values
+sudo chmod 600 /etc/familiar/.env
 ```
 
 ### 3. Create the systemd unit
 
 ```bash
-sudo nano /etc/systemd/system/agent-server.service
+sudo nano /etc/systemd/system/familiar.service
 ```
 
 ```ini
@@ -134,8 +134,8 @@ After=network.target
 [Service]
 Type=simple
 User=agent
-EnvironmentFile=/etc/agent-server/.env
-ExecStart=/usr/local/bin/agent-server
+EnvironmentFile=/etc/familiar/.env
+ExecStart=/usr/local/bin/familiar
 Restart=on-failure
 RestartSec=5
 ; Log level — set to debug for troubleshooting
@@ -149,15 +149,15 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable agent-server
-sudo systemctl start agent-server
-sudo systemctl status agent-server
+sudo systemctl enable familiar
+sudo systemctl start familiar
+sudo systemctl status familiar
 ```
 
 ### 5. View logs
 
 ```bash
-journalctl -u agent-server -f
+journalctl -u familiar -f
 ```
 
 ---

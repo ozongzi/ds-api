@@ -1,6 +1,7 @@
 mod bot;
 mod config;
 mod state;
+mod tools;
 
 use std::sync::Arc;
 
