@@ -2,9 +2,11 @@ use ds_api::tool;
 use serde_json::json;
 use tokio::process::Command;
 
-/// Working directory of the ds-api-workspace on the server.
-/// Adjust this path if the workspace lives somewhere else.
-const WORKSPACE: &str = "/root/ds-api-workspace";
+/// Root of the workspace on the server.
+const WORKSPACE: &str = "/root";
+
+/// Path to cargo binary.
+const CARGO: &str = "/root/.cargo/bin/cargo";
 
 pub struct SelfUpdateTool;
 
@@ -14,20 +16,52 @@ impl Tool for SelfUpdateTool {
     /// 用于在修改源码后验证代码能否编译通过。
     /// 返回编译器输出（stdout + stderr）和退出码。
     async fn build_familiar(&self) -> Value {
-        run_make("build", WORKSPACE).await
+        run_cargo(&["build", "-p", "familiar", "--release"], WORKSPACE).await
     }
 
-    /// 构建前端 React/Vite 客户端（不部署）。
-    /// 返回构建工具输出和退出码。
-    async fn build_client(&self) -> Value {
-        run_make("build-client", WORKSPACE).await
-    }
-
-    /// 完整构建（前端 + 后端）并部署到生产服务器，然后重启 familiar 服务。
+    /// 完整构建后端并替换二进制，然后重启 familiar 服务。
     /// 注意：重启会导致当前 WebSocket 连接短暂中断，客户端会自动重连。
-    /// 只在编译验证通过后调用此工具。
+    /// 只在 build_familiar 验证编译通过后调用此工具。
     async fn deploy_familiar(&self) -> Value {
-        run_make("deploy", WORKSPACE).await
+        // 1. build
+        let build = run_cargo(&["build", "-p", "familiar", "--release"], WORKSPACE).await;
+        if !build
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return build;
+        }
+
+        // 2. stop service, copy binary, start service
+        let steps: &[(&str, &[&str])] = &[
+            ("systemctl", &["stop", "familiar"]),
+            (
+                "cp",
+                &["/root/target/release/familiar", "/usr/local/bin/familiar"],
+            ),
+            ("systemctl", &["start", "familiar"]),
+        ];
+
+        for (cmd, args) in steps {
+            let out = Command::new(cmd).args(*args).output().await;
+            match out {
+                Ok(o) if !o.status.success() => {
+                    return json!({
+                        "success": false,
+                        "step": cmd,
+                        "stderr": String::from_utf8_lossy(&o.stderr).to_string(),
+                        "exit_code": o.status.code(),
+                    });
+                }
+                Err(e) => {
+                    return json!({ "success": false, "step": cmd, "error": e.to_string() });
+                }
+                _ => {}
+            }
+        }
+
+        json!({ "success": true, "message": "deployed and restarted" })
     }
 
     /// 读取 familiar 当前运行的 systemd 服务日志（最近 N 行）。
@@ -96,10 +130,10 @@ impl Tool for SelfUpdateTool {
     }
 }
 
-/// Run `make <target>` in `cwd`, capturing stdout + stderr.
-async fn run_make(target: &str, cwd: &str) -> serde_json::Value {
-    let output = Command::new("make")
-        .arg(target)
+/// Run cargo with the given args in `cwd`, capturing stdout + stderr.
+async fn run_cargo(args: &[&str], cwd: &str) -> serde_json::Value {
+    let output = Command::new(CARGO)
+        .args(args)
         .current_dir(cwd)
         .output()
         .await;
