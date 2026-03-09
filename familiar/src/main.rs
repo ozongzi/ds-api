@@ -41,7 +41,8 @@ async fn main() {
 
     // ── App state ─────────────────────────────────────────────────────────────
 
-    let state = Arc::new(state::AppState::new(&cfg, pool));
+    let mcp_tools = state::AppState::init_mcp().await;
+    let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools));
     let web_state = web::AppState(Arc::clone(&state));
 
     // ── Web server ────────────────────────────────────────────────────────────

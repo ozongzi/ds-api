@@ -8,7 +8,7 @@ name = "familiar"
 path = "src/main.rs"
 
 [dependencies]
-ds-api = { path = "../ds-api" }
+ds-api = { path = "../ds-api", features = ["mcp"] }
 
 # Web
 axum = { version = "0.8", features = ["macros", "ws"] }

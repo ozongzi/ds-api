@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
+use ds_api::McpTool;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -106,10 +107,14 @@ pub struct AppState {
 
     /// Embedding client — shared across all conversations.
     pub embed: EmbeddingClient,
+
+    /// MCP tools initialised once at startup and shared across all agents.
+    /// Each agent gets a cheap clone (all internals are Arc).
+    pub mcp_tools: Vec<McpTool>,
 }
 
 impl AppState {
-    pub fn new(cfg: &Config, pool: PgPool) -> Self {
+    pub fn new(cfg: &Config, pool: PgPool, mcp_tools: Vec<McpTool>) -> Self {
         let db = Db::new(pool.clone());
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
@@ -118,7 +123,39 @@ impl AppState {
             pool,
             db,
             embed: EmbeddingClient::new(cfg.openrouter_token.clone()),
+            mcp_tools,
         }
+    }
+
+    /// Initialise MCP servers. Called once at startup.
+    /// Failures are logged and skipped — a missing MCP server should never
+    /// prevent familiar from starting.
+    pub async fn init_mcp() -> Vec<McpTool> {
+        let mut tools = Vec::new();
+
+        match McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await {
+            Ok(t) => {
+                info!("MCP: playwright ready");
+                tools.push(t);
+            }
+            Err(e) => warn!("MCP: playwright failed to start: {e}"),
+        }
+        match McpTool::stdio("uvx", &["mcp-server-fetch"]).await {
+            Ok(t) => {
+                info!("MCP: fetch ready");
+                tools.push(t);
+            }
+            Err(e) => warn!("MCP: fetch failed to start: {e}"),
+        }
+        match McpTool::stdio("npx", &["-y", "@modelcontextprotocol/server-github"]).await {
+            Ok(t) => {
+                info!("MCP: github ready");
+                tools.push(t);
+            }
+            Err(e) => warn!("MCP: github failed to start: {e}"),
+        }
+
+        tools
     }
 
     /// Build a fresh agent for `conversation_id`, restoring history from PG.
@@ -149,6 +186,10 @@ impl AppState {
                 embed: self.embed.clone(),
                 conversation_id,
             });
+
+        for mcp_tool in &self.mcp_tools {
+            builder = builder.add_tool(mcp_tool.clone());
+        }
 
         if let Some(prompt) = &self.system_prompt {
             builder = builder.with_system_prompt(prompt.clone());

@@ -88,6 +88,7 @@ pub enum McpError {
 /// server via the `rmcp` client.
 ///
 /// See the [module-level documentation][self] for usage examples.
+#[derive(Clone)]
 pub struct McpTool {
     /// Cached tool definitions fetched from the MCP server at startup.
     tools: Vec<RawTool>,
