@@ -1,43 +1,34 @@
 mod bot;
 mod config;
+mod db;
+mod embedding;
 mod state;
 mod tools;
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::routing::post;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() {
-    // ── Logging ───────────────────────────────────────────────────────────────
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
-    // ── Config ────────────────────────────────────────────────────────────────
     let cfg = config::Config::from_env();
 
-    info!(
-        bot_token_len = cfg.telegram_token.len(),
-        "agent-server starting"
-    );
+    info!("familiar starting");
 
-    // ── Shared state ──────────────────────────────────────────────────────────
-    let state = Arc::new(state::AppState::new(&cfg));
+    let db: db::Db = db::Db::open(&cfg.db_path)
+        .await
+        .unwrap_or_else(|e| panic!("failed to open database at {}: {e}", cfg.db_path));
 
-    // ── Router ────────────────────────────────────────────────────────────────
-    let app = Router::new()
-        .route("/webhook", post(bot::webhook_handler))
-        .with_state(state);
+    info!(path = %cfg.db_path, "database opened");
 
-    let addr = format!("0.0.0.0:{}", cfg.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    info!(addr, "listening");
+    let state = Arc::new(state::AppState::new(&cfg, db));
 
-    axum::serve(listener, app).await.unwrap();
+    bot::run(&cfg.discord_token, state).await;
 }

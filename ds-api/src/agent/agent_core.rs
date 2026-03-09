@@ -148,6 +148,16 @@ impl DeepseekAgent {
         crate::agent::stream::AgentStream::new(self)
     }
 
+    /// Start an agent turn from the current history **without** pushing a new
+    /// user message first.
+    ///
+    /// Use this when you have already appended the user message manually (e.g.
+    /// via [`push_user_message_with_name`][Self::push_user_message_with_name])
+    /// and want to drive the agent loop from that point.
+    pub fn chat_from_history(self) -> crate::agent::stream::AgentStream {
+        crate::agent::stream::AgentStream::new(self)
+    }
+
     /// Enable SSE streaming for each API turn (builder-style).
     pub fn with_streaming(mut self) -> Self {
         self.streaming = true;
@@ -167,6 +177,54 @@ impl DeepseekAgent {
     pub fn with_summarizer(mut self, summarizer: impl Summarizer + 'static) -> Self {
         self.conversation = self.conversation.with_summarizer(summarizer);
         self
+    }
+
+    /// Seed the agent with an existing message history (builder-style).
+    ///
+    /// Used to restore a conversation from persistent storage (e.g. SQLite)
+    /// after a process restart.  The messages are set directly on the
+    /// underlying `Conversation` and will be included in the next API call.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ds_api::DeepseekAgent;
+    /// use ds_api::raw::request::message::{Message, Role};
+    ///
+    /// # #[tokio::main] async fn main() {
+    /// let history = vec![
+    ///     Message::new(Role::User, "Hello"),
+    ///     Message::new(Role::Assistant, "Hi there!"),
+    /// ];
+    /// let agent = DeepseekAgent::new("sk-...").with_history(history);
+    /// # }
+    /// ```
+    pub fn with_history(mut self, history: Vec<crate::raw::request::message::Message>) -> Self {
+        self.conversation = self.conversation.with_history(history);
+        self
+    }
+
+    /// Append a user message with an optional display name to the conversation
+    /// history.
+    ///
+    /// The `name` field is passed through to the API as-is (OpenAI-compatible
+    /// providers use it to distinguish speakers in a shared channel).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ds_api::DeepseekAgent;
+    ///
+    /// # #[tokio::main] async fn main() {
+    /// let mut agent = DeepseekAgent::new("sk-...");
+    /// agent.push_user_message_with_name("What time is it?", Some("alice"));
+    /// # }
+    /// ```
+    pub fn push_user_message_with_name(&mut self, text: &str, name: Option<&str>) {
+        use crate::raw::request::message::{Message, Role};
+        let mut msg = Message::new(Role::User, text);
+        msg.name = name.map(|n| n.to_string());
+        self.conversation.history_mut().push(msg);
     }
 
     /// Read-only view of the current conversation history.

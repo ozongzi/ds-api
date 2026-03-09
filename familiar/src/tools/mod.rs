@@ -1,12 +1,16 @@
 mod command_tool;
 mod file_tool;
+mod history_tool;
+mod present_file;
 mod script_tool;
 
 pub use command_tool::CommandTool;
 pub use file_tool::FileTool;
+pub use history_tool::HistoryTool;
+pub use present_file::PresentFileTool;
 pub use script_tool::ScriptTool;
 
-const MAX_OUTPUT_CHARS: usize = 8_000;
+pub const MAX_OUTPUT_CHARS: usize = 8_000;
 
 /// 超长输出保留头尾，中间用省略提示替换
 pub(super) fn truncate_output(s: &str, max_chars: usize) -> String {

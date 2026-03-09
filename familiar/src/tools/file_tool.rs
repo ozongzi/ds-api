@@ -1,6 +1,8 @@
 use ds_api::tool;
 use serde_json::json;
 
+use super::{MAX_OUTPUT_CHARS, truncate_output};
+
 pub struct FileTool;
 
 #[tool]
@@ -66,7 +68,7 @@ impl Tool for FileTool {
                     return json!({ "error": "out of bounds" });
                 }
 
-                let content = lines[left..right].join("\n");
+                let content = truncate_output(&lines[left..right].join("\n"), MAX_OUTPUT_CHARS);
                 json!({ "content": content })
             }
             Err(e) => json!({ "error": e.to_string() }),
@@ -93,7 +95,8 @@ impl Tool for FileTool {
         match std::fs::read(&path) {
             Ok(content) => {
                 let slice = content.get(begin..end).unwrap_or_default();
-                json!({ "content": format!("{:02x?}", slice) })
+                let hex = truncate_output(&format!("{:02x?}", slice), MAX_OUTPUT_CHARS);
+                json!({ "content": hex })
             }
             Err(e) => json!({ "error": e.to_string() }),
         }

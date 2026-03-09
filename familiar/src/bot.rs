@@ -1,255 +1,372 @@
-//! Telegram webhook handler.
+//! Discord event handler and per-turn persistence.
 //!
-//! Responsibilities:
-//! - Deserialize incoming `Update` objects from Telegram.
-//! - Verify the `X-Telegram-Bot-Api-Secret-Token` header when configured.
-//! - Dispatch text messages to the agent and stream the reply back via
-//!   `sendMessage` (one message per completed agent turn).
-//! - Expose `send_message` as a thin async helper used elsewhere.
+//! # Message flow
+//!
+//! ```text
+//! user sends message in channel
+//!   │
+//!   ▼
+//! Handler::message()
+//!   ├─ ignore bots / empty messages
+//!   ├─ post a "thinking…" placeholder message
+//!   └─ spawn handle_turn()
+//!         │
+//!         ├─ agent.chat() → AgentStream
+//!         │     ├─ Token        → accumulate; edit placeholder every ~800ms
+//!         │     ├─ ToolCall     → post grey embed with spoiler-wrapped args
+//!         │     └─ ToolResult   → edit that embed green/red with spoiler-wrapped result
+//!         └─ final edit with complete reply
+//! ```
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use axum::Json;
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
 use ds_api::AgentEvent;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use serenity::all::{
+    CreateAttachment, CreateEmbed, CreateMessage, EditMessage, GatewayIntents, Http,
+};
+use serenity::async_trait;
+use serenity::model::channel::Message as DiscordMessage;
+use serenity::model::gateway::Ready;
+use serenity::prelude::*;
+use tracing::{error, info};
 
 use crate::state::AppState;
+use ds_api::raw::request::message::{Message as AgentMessage, Role};
 
-// ── Telegram types ────────────────────────────────────────────────────────────
+// How often (at most) we edit the placeholder while tokens stream in.
+const STREAM_EDIT_INTERVAL: Duration = Duration::from_millis(800);
 
-#[derive(Debug, Deserialize)]
-pub struct Update {
-    pub update_id: i64,
-    pub message: Option<Message>,
+// ── Serenity boilerplate ──────────────────────────────────────────────────────
+
+pub struct Handler {
+    pub state: Arc<AppState>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Message {
-    pub message_id: i64,
-    pub chat: Chat,
-    pub text: Option<String>,
-    pub from: Option<User>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Chat {
-    pub id: i64,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct User {
-    pub id: i64,
-    pub first_name: String,
-    pub username: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SendMessageRequest<'a> {
-    chat_id: i64,
-    text: &'a str,
-    /// Use "Markdown" for simple formatting; fall back to plain text if the
-    /// message contains characters that would break Markdown parsing.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parse_mode: Option<&'a str>,
-}
-
-// ── Webhook handler ───────────────────────────────────────────────────────────
-
-/// axum handler for `POST /webhook`.
-///
-/// Telegram calls this endpoint for every update.  We respond with `200 OK`
-/// immediately (Telegram requires a fast acknowledgement) and run the agent
-/// turn in a spawned task so we never block Telegram's delivery loop.
-pub async fn webhook_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(update): Json<Update>,
-) -> impl IntoResponse {
-    // ── Secret token verification ─────────────────────────────────────────────
-    if let Some(expected) = &state.webhook_secret {
-        let provided = headers
-            .get("X-Telegram-Bot-Api-Secret-Token")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if provided != expected {
-            warn!("webhook request with wrong secret token — ignoring");
-            // Return 200 so Telegram doesn't retry, but do nothing.
-            return StatusCode::OK;
-        }
+#[async_trait]
+impl EventHandler for Handler {
+    async fn ready(&self, _: Context, ready: Ready) {
+        info!(user = %ready.user.tag(), "connected to Discord");
     }
 
-    debug!(update_id = update.update_id, "received update");
+    async fn message(&self, ctx: Context, msg: DiscordMessage) {
+        // Ignore bots (including ourselves) and empty messages.
+        if msg.author.bot || msg.content.trim().is_empty() {
+            return;
+        }
 
-    // Only handle text messages; silently ignore everything else (stickers,
-    // voice, etc.).
-    let Some(msg) = update.message else {
-        return StatusCode::OK;
-    };
-    let Some(text) = msg.text else {
-        return StatusCode::OK;
-    };
+        let channel_id = msg.channel_id;
+        let text = msg.content.clone();
+        let author_name = msg.author.name.clone();
 
-    let chat_id = msg.chat.id;
-    let user = msg
-        .from
-        .as_ref()
-        .map(|u| u.first_name.as_str())
-        .unwrap_or("user");
-    info!(chat_id, user, "incoming message");
+        info!(
+            channel = %channel_id,
+            author = %msg.author.tag(),
+            "incoming message"
+        );
 
-    // Spawn the agent turn so we can return 200 immediately.
-    tokio::spawn(handle_turn(state, chat_id, text));
+        // Persist the incoming user message immediately.
+        {
+            let mut user_msg = AgentMessage::new(Role::User, &text);
+            user_msg.name = Some(author_name.clone());
+            self.state.persist_message(
+                channel_id,
+                &user_msg,
+                self.state.db.clone(),
+                self.state.embed.clone(),
+            );
+        }
 
-    StatusCode::OK
+        // Post a placeholder that we'll edit as the agent responds.
+        let placeholder: DiscordMessage = match channel_id
+            .send_message(&ctx.http, CreateMessage::new().content("…"))
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                error!("failed to send placeholder: {e}");
+                return;
+            }
+        };
+
+        tokio::spawn(handle_turn(
+            Arc::clone(&ctx.http),
+            Arc::clone(&self.state),
+            channel_id,
+            placeholder,
+            text,
+            author_name,
+        ));
+    }
+}
+
+/// Build and start the serenity `Client`. Returns when the gateway disconnects.
+pub async fn run(discord_token: &str, state: Arc<AppState>) {
+    let intents = GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::DIRECT_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT;
+
+    let mut client = Client::builder(discord_token, intents)
+        .event_handler(Handler { state })
+        .await
+        .expect("failed to create Discord client");
+
+    if let Err(e) = client.start().await {
+        error!("Discord client error: {e}");
+    }
 }
 
 // ── Agent turn ────────────────────────────────────────────────────────────────
 
-/// Drive one agent turn for `chat_id` and send the reply back via Telegram.
-///
-/// The agent is `take()`-n out of the shared state while the turn runs, then
-/// put back when the stream finishes.  Concurrent messages from the same chat
-/// are serialized via the interrupt channel: the second message arrives while
-/// the first turn is still running and is injected mid-loop via
-/// `interrupt_tx.send()`.
-async fn handle_turn(state: Arc<AppState>, chat_id: i64, text: String) {
+async fn handle_turn(
+    http: Arc<Http>,
+    state: Arc<AppState>,
+    channel_id: serenity::model::id::ChannelId,
+    mut placeholder: serenity::model::channel::Message,
+    text: String,
+    author_name: String,
+) {
     // Try to take the agent out of the shared map.
-    //
-    // If another turn is already running for this chat (agent is None), inject
-    // the new message through the interrupt channel instead of starting a new
-    // turn — the running turn will pick it up after its current tool round.
-    let agent_opt = state.with_chat(chat_id, |entry| {
-        if entry.agent.is_some() {
-            entry.agent.take()
-        } else {
-            // Agent is busy — inject via interrupt channel.
-            let _ = entry.interrupt_tx.send(text.clone());
-            None
-        }
-    });
+    // If it's busy, inject via interrupt channel instead.
+    let agent_opt = state
+        .with_chat_async(channel_id, |entry| {
+            if entry.agent.is_some() {
+                entry.agent.take()
+            } else {
+                let _ = entry.interrupt_tx.send(text.clone());
+                None
+            }
+        })
+        .await;
 
-    let Some(agent) = agent_opt else {
-        info!(
-            chat_id,
-            "agent busy — message injected via interrupt channel"
-        );
+    let Some(mut agent) = agent_opt else {
+        info!(channel = %channel_id, "agent busy — injected via interrupt channel");
+        let _ = placeholder
+            .edit(&http, EditMessage::new().content("*(queued)*"))
+            .await;
         return;
     };
 
-    // Drive the agent turn.
-    let mut reply = String::new();
-    let mut stream = agent.chat(&text);
+    // Push user message with name so the model knows who is speaking.
+    agent.push_user_message_with_name(&text, Some(&author_name));
+
+    let mut reply_buf = String::new();
+    let mut last_edit = Instant::now();
+
+    // Track per-tool embed messages so we can edit them when results arrive.
+    // Key = tool call id, Value = the embed message.
+    let mut tool_messages: std::collections::HashMap<String, serenity::model::channel::Message> =
+        std::collections::HashMap::new();
+
+    // Files to upload after the stream finishes.
+    // Each entry: (tool_call_id, filename, bytes)
+    let mut pending_uploads: Vec<(String, String, Vec<u8>)> = Vec::new();
+
+    // Whether the placeholder has been committed (flushed with real content).
+    let mut placeholder_used = false;
+
+    let mut stream = agent.chat_from_history();
 
     while let Some(event) = stream.next().await {
         match event {
+            // ── Streaming text ────────────────────────────────────────────────
             Ok(AgentEvent::Token(token)) => {
-                reply.push_str(&token);
+                reply_buf.push_str(&token);
+
+                if last_edit.elapsed() >= STREAM_EDIT_INTERVAL {
+                    let display = truncate_for_discord(&reply_buf);
+                    let _ = placeholder
+                        .edit(&http, EditMessage::new().content(display))
+                        .await;
+                    last_edit = Instant::now();
+                }
             }
+
+            // ── Tool call starting ────────────────────────────────────────────
             Ok(AgentEvent::ToolCall(info)) => {
-                info!(chat_id, tool = info.name, "tool call");
+                // Flush whatever text has accumulated before this tool call.
+                if !reply_buf.is_empty() {
+                    let display = truncate_for_discord(&reply_buf);
+                    let _ = placeholder
+                        .edit(&http, EditMessage::new().content(display))
+                        .await;
+                    reply_buf.clear();
+                    placeholder_used = true;
+                } else if !placeholder_used {
+                    // No text yet — delete the bare "…" placeholder so the tool
+                    // embed appears first without an empty message above it.
+                    let _ = placeholder.delete(&http).await;
+                    placeholder_used = true;
+                }
+
+                let args_str = info.args.to_string();
+                let args_preview = if args_str.len() > 900 {
+                    format!("{}…", &args_str[..900])
+                } else {
+                    args_str
+                };
+
+                let embed = CreateEmbed::new()
+                    .title(format!("⚙️ {}", info.name))
+                    .description(format!("```json\n{}\n```", args_preview))
+                    .colour(0x5865F2);
+
+                match channel_id
+                    .send_message(&http, CreateMessage::new().embed(embed))
+                    .await
+                {
+                    Ok(m) => {
+                        tool_messages.insert(info.id.clone(), m);
+                    }
+                    Err(e) => error!("failed to send tool call embed: {e}"),
+                }
             }
+
+            // ── Tool result ───────────────────────────────────────────────────
             Ok(AgentEvent::ToolResult(res)) => {
-                info!(chat_id, tool = res.name, "tool result");
+                let wants_upload = res
+                    .result
+                    .get("upload")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if wants_upload {
+                    let filename = res
+                        .result
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("file")
+                        .to_string();
+                    let data_b64 = res
+                        .result
+                        .get("data_base64")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+
+                    use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+                    match BASE64.decode(data_b64) {
+                        Ok(bytes) => {
+                            pending_uploads.push((res.id.clone(), filename, bytes));
+                        }
+                        Err(e) => error!("base64 decode error: {e}"),
+                    }
+                }
+
+                if let Some(_tool_msg) = tool_messages.remove(&res.id) {
+                    let has_error = res.result.get("error").is_some();
+                    let colour = if has_error { 0xED4245 } else { 0x57F287 };
+                    let icon = if has_error { "❌" } else { "✅" };
+
+                    let description = if wants_upload {
+                        let size = res.result.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                        format!(
+                            "📎 `{}` ({} bytes)",
+                            res.result
+                                .get("filename")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("file"),
+                            size
+                        )
+                    } else {
+                        let s = res.result.to_string();
+                        let preview = if s.len() > 900 {
+                            format!("{}…", &s[..900])
+                        } else {
+                            s
+                        };
+                        format!("```json\n{}\n```", preview)
+                    };
+
+                    let embed = CreateEmbed::new()
+                        .title(format!("{icon} {}", res.name))
+                        .description(description)
+                        .colour(colour);
+
+                    if let Err(e) = channel_id
+                        .send_message(&http, CreateMessage::new().embed(embed))
+                        .await
+                    {
+                        error!("failed to send tool result embed: {e}");
+                    }
+
+                    // Fresh placeholder for text that follows, now guaranteed to be
+                    // after the result embed in the channel timeline.
+                    match channel_id
+                        .send_message(&http, CreateMessage::new().content("…"))
+                        .await
+                    {
+                        Ok(m) => {
+                            placeholder = m;
+                            placeholder_used = false;
+                            last_edit = Instant::now();
+                        }
+                        Err(e) => error!("failed to send post-result placeholder: {e}"),
+                    }
+                }
             }
+
             Err(e) => {
-                error!(chat_id, error = %e, "agent error");
-                let _ = send_message(
-                    &state.telegram_token,
-                    chat_id,
-                    "⚠️ Something went wrong. Please try again.",
-                )
-                .await;
-                // Put the agent back even on error so the chat remains usable.
+                error!(channel = %channel_id, "agent error: {e}");
+                let _ = placeholder
+                    .edit(&http, EditMessage::new().content(format!("⚠️ Error: {e}")))
+                    .await;
+
                 if let Some(recovered) = stream.into_agent() {
-                    state.with_chat(chat_id, |entry| entry.agent = Some(recovered));
+                    state
+                        .with_chat_async(channel_id, |entry| entry.agent = Some(recovered))
+                        .await;
                 }
                 return;
             }
         }
     }
 
-    // Recover the agent and put it back before sending the reply, so a
-    // follow-up message that arrives while sendMessage is in flight can already
-    // acquire the agent.
+    // Recover agent before any remaining I/O so follow-up messages can acquire it.
     if let Some(recovered) = stream.into_agent() {
-        state.with_chat(chat_id, |entry| entry.agent = Some(recovered));
+        state
+            .with_chat_async(channel_id, |entry| entry.agent = Some(recovered))
+            .await;
     }
 
-    if reply.is_empty() {
-        return;
+    // Final edit of the reply placeholder.
+    if !reply_buf.is_empty() {
+        let assistant_msg = AgentMessage::new(Role::Assistant, &reply_buf);
+        state.persist_message(
+            channel_id,
+            &assistant_msg,
+            state.db.clone(),
+            state.embed.clone(),
+        );
+
+        let display = truncate_for_discord(&reply_buf);
+        let _ = placeholder
+            .edit(&http, EditMessage::new().content(display))
+            .await;
+    } else {
+        let _ = placeholder.delete(&http).await;
     }
 
-    if let Err(e) = send_message(&state.telegram_token, chat_id, &reply).await {
-        error!(chat_id, error = %e, "failed to send Telegram message");
-    }
-}
-
-// ── Telegram API helper ───────────────────────────────────────────────────────
-
-/// Call `sendMessage` on the Telegram Bot API.
-///
-/// Tries Markdown parse mode first; if Telegram rejects it (parse error) falls
-/// back to plain text so the user always gets a reply.
-pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<(), reqwest::Error> {
-    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-    let client = reqwest::Client::new();
-
-    // Split long messages — Telegram's limit is 4096 characters per message.
-    for chunk in split_message(text, 4096) {
-        let body = SendMessageRequest {
-            chat_id,
-            text: chunk,
-            parse_mode: Some("Markdown"),
-        };
-
-        let resp = client.post(&url).json(&body).send().await?;
-
-        // If Telegram rejects Markdown (e.g. unclosed formatting), retry as plain text.
-        if !resp.status().is_success() {
-            let plain = SendMessageRequest {
-                chat_id,
-                text: chunk,
-                parse_mode: None,
-            };
-            client.post(&url).json(&plain).send().await?;
+    // Upload any queued files.
+    for (_id, filename, bytes) in pending_uploads {
+        let attachment = CreateAttachment::bytes(bytes, filename);
+        if let Err(e) = channel_id
+            .send_message(&http, CreateMessage::new().add_file(attachment))
+            .await
+        {
+            error!("failed to upload file: {e}");
         }
     }
-
-    Ok(())
 }
 
-/// Split `text` into chunks of at most `max_chars` characters, breaking on
-/// newlines where possible to avoid splitting mid-sentence.
-fn split_message(text: &str, max_chars: usize) -> Vec<&str> {
-    if text.len() <= max_chars {
-        return vec![text];
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Discord's regular message limit is 2000 characters.
+fn truncate_for_discord(s: &str) -> String {
+    const LIMIT: usize = 1900;
+    if s.len() <= LIMIT {
+        s.to_string()
+    } else {
+        format!("{}…\n*(truncated)*", &s[..LIMIT])
     }
-
-    let mut chunks = Vec::new();
-    let mut start = 0;
-
-    while start < text.len() {
-        let end = (start + max_chars).min(text.len());
-
-        // Try to break on a newline within the last 20% of the chunk.
-        let search_from = start + (max_chars * 4 / 5);
-        let break_at = if end < text.len() {
-            text[search_from..end]
-                .rfind('\n')
-                .map(|i| search_from + i + 1)
-                .unwrap_or(end)
-        } else {
-            end
-        };
-
-        chunks.push(&text[start..break_at]);
-        start = break_at;
-    }
-
-    chunks
 }
