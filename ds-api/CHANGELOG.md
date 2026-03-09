@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4] - 2026-03-09
+
+### Summary
+Bug fix: interrupt channel messages were silently dropped on turns where the model returned a plain text response with no tool calls.
+
+### Bug fixes
+
+**Interrupt channel now drained before every API turn**
+- Previously, `with_interrupt_channel()` messages were only picked up inside `execute_tools()`, meaning any message sent during a no-tool turn was never inserted into the conversation history.
+- `drain_interrupts()` is now also called at the top of the `Idle` state transition, so queued messages are always flushed before the next API call regardless of whether tools were used in the previous turn.
+
+### Notes
+- No breaking changes — all `0.5.x` code continues to compile unchanged.
+
+---
+
 ## [0.5.3] - 2026-03-11
 
 ### Summary
