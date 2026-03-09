@@ -1,5 +1,5 @@
 [workspace]
-members = [
+members = ["agent-server",
     "ds-api",
     "ds-api-macros",
 ]

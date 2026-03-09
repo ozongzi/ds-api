@@ -18,7 +18,7 @@ Bug fix: interrupt channel messages were silently dropped on turns where the mod
 
 ---
 
-## [0.5.3] - 2026-03-11
+## [0.5.3] - 2026-03-09
 
 ### Summary
 Mid-loop user message injection via an interrupt channel. No breaking changes — all existing `0.5.x` code continues to compile unchanged.
