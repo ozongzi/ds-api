@@ -178,6 +178,8 @@ fn extract_system_prompts(history: &mut Vec<Message>) -> Vec<Message> {
 pub struct LlmSummarizer {
     /// Client used exclusively for summary API calls (can share the agent's token).
     client: ApiClient,
+    /// Model used for the summarization API call.  Defaults to `"deepseek-chat"`.
+    pub(crate) model: String,
     /// Estimated token count above which summarization is triggered.
     pub(crate) token_threshold: usize,
     /// Number of most-recent non-system messages to retain verbatim.
@@ -186,12 +188,31 @@ pub struct LlmSummarizer {
 
 impl LlmSummarizer {
     /// Create with default thresholds: trigger at ~60 000 tokens, retain last 10 turns.
+    ///
+    /// The summarization call uses `"deepseek-chat"` by default.  Override with
+    /// [`with_model`][LlmSummarizer::with_model] — useful when the agent is
+    /// pointed at an OpenAI-compatible provider and you want the summarizer to
+    /// use the same model.
     pub fn new(client: ApiClient) -> Self {
         Self {
             client,
+            model: "deepseek-chat".to_string(),
             token_threshold: 60_000,
             retain_last: 10,
         }
+    }
+
+    /// Builder: set the model used for the summarization API call.
+    ///
+    /// ```no_run
+    /// use ds_api::{ApiClient, LlmSummarizer};
+    ///
+    /// let summarizer = LlmSummarizer::new(ApiClient::new("sk-..."))
+    ///     .with_model("gpt-4o-mini");
+    /// ```
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
     }
 
     /// Builder: set a custom token threshold.
@@ -266,6 +287,7 @@ impl Summarizer for LlmSummarizer {
             );
 
             let req = ApiRequest::builder()
+                .with_model(self.model.clone())
                 .add_message(Message::new(Role::User, &summarize_prompt))
                 .max_tokens(512);
 

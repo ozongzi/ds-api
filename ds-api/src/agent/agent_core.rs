@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::api::ApiClient;
-use crate::conversation::{Conversation, Summarizer};
+use crate::conversation::{Conversation, LlmSummarizer, Summarizer};
 use crate::raw::request::message::{Message, Role};
 use crate::tool_trait::Tool;
 use serde_json::Value;
@@ -77,17 +77,48 @@ pub struct DeepseekAgent {
     /// When `true` the agent uses SSE streaming for each API turn so `Token` events
     /// arrive incrementally.  When `false` (default) the full response is awaited.
     pub(crate) streaming: bool,
+    /// The model to use for every API turn.  Defaults to `"deepseek-chat"`.
+    pub(crate) model: String,
 }
 
 impl DeepseekAgent {
-    /// Create a new agent with the given API token.
-    pub fn new(token: impl Into<String>) -> Self {
+    fn from_parts(client: ApiClient, model: impl Into<String>) -> Self {
+        let model = model.into();
+        let summarizer = LlmSummarizer::new(client.clone()).with_model(model.clone());
         Self {
-            conversation: Conversation::new(ApiClient::new(token)),
+            conversation: Conversation::new(client).with_summarizer(summarizer),
             tools: vec![],
             tool_index: HashMap::new(),
             streaming: false,
+            model,
         }
+    }
+
+    /// Create a new agent targeting the DeepSeek API with `deepseek-chat`.
+    pub fn new(token: impl Into<String>) -> Self {
+        Self::from_parts(ApiClient::new(token), "deepseek-chat")
+    }
+
+    /// Create an agent targeting an OpenAI-compatible provider.
+    ///
+    /// All three parameters are set at construction time and never change:
+    ///
+    /// ```no_run
+    /// use ds_api::DeepseekAgent;
+    ///
+    /// let agent = DeepseekAgent::custom(
+    ///     "sk-or-...",
+    ///     "https://openrouter.ai/api/v1",
+    ///     "meta-llama/llama-3.3-70b-instruct:free",
+    /// );
+    /// ```
+    pub fn custom(
+        token: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        let client = ApiClient::new(token).with_base_url(base_url);
+        Self::from_parts(client, model)
     }
 
     /// Register a tool (builder-style, supports chaining).

@@ -9,7 +9,8 @@ pub struct ChatCompletionChunk {
     pub choices: Vec<ChunkChoice>,
     pub created: u64,
     pub model: String,
-    pub system_fingerprint: String,
+    #[serde(default)]
+    pub system_fingerprint: Option<String>,
     #[serde(rename = "object")]
     pub object: ChunkObjectType,
     #[serde(default)]

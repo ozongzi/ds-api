@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2] - 2026-03-10
+
+### Summary
+OpenAI-compatible provider support. No breaking changes — all existing `0.5.x` code continues to compile unchanged.
+
+### New features
+
+**`DeepseekAgent::custom(token, base_url, model)`**
+- New constructor for pointing the agent at any OpenAI-compatible endpoint (OpenRouter, OpenAI, local Ollama, etc.).
+- All three parameters are fixed at construction time; the agent is fully configured in one call.
+- The default `LlmSummarizer` is automatically initialised with the same base URL and model — no manual `ApiClient` or `LlmSummarizer` wiring required.
+
+```rust
+// DeepSeek (unchanged)
+let agent = DeepseekAgent::new(token);
+
+// Any OpenAI-compatible provider
+let agent = DeepseekAgent::custom(
+    token,
+    "https://openrouter.ai/api/v1",
+    "meta-llama/llama-3.3-70b-instruct:free",
+);
+```
+
+**`DeepseekAgent::with_model(model)` / `ApiRequest::with_model(model)` / `LlmSummarizer::with_model(model)`**
+- New builder method on each type accepting any `impl Into<String>` model identifier.
+- Removes the need to import or construct the internal `Model` enum for custom model names.
+
+**`Model::Custom(String)` variant**
+- The internal `Model` enum gained a `Custom(String)` variant with hand-written `Serialize`/`Deserialize` that passes the string through as-is.
+- `Model` is not re-exported at the crate root; callers use the string-based builders above instead.
+
+**`system_fingerprint` made optional in responses**
+- `ChatCompletionResponse` and `ChatCompletionChunk` now deserialise correctly when the provider omits `system_fingerprint` (many non-DeepSeek providers do).
+
+### Notes
+- All 49 tests (22 unit, 10 integration, 17 doctest) pass.
+- No breaking changes — `0.5.1` consumers require no code changes.
+- The Roadmap item "OpenAI-compatible providers" is now complete.
+
+---
+
 ## [0.5.1] - 2026-03-09
 
 ### Summary

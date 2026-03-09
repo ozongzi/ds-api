@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/ds-api)](https://docs.rs/ds-api)
 [![license](https://img.shields.io/crates/l/ds-api.svg)](https://github.com/ozongzi/ds-api/blob/main/LICENSE-MIT)
 
-**Your Rust functions. DeepSeek's brain. Zero glue code.**
+**Your Rust functions. Any LLM. Zero glue code.**
 
 ```
 cargo add ds-api
@@ -80,8 +80,8 @@ impl Tool for Database {
     /// Query the database and return matching rows.
     /// sql: SQL query to execute
     /// limit: maximum number of rows to return
-    async fn query(&self, sql: String, limit: Option<u32>) -> Value {
-        // your real implementation
+    async fn query(&self, sql: String, limit: Option<u32>) -> Vec<Row> {
+        // your real implementation — any impl Serialize works as return type
     }
 }
 ```
@@ -89,9 +89,10 @@ impl Tool for Database {
 - **Doc comment → tool description.** No separate description field.
 - **`param: description` in doc → parameter description.** Inline.
 - **`Option<T>` → optional parameter.** The schema marks it non-required automatically.
-- **Compile error on unsupported types.** You find out at build time, not runtime.
+- **Return any `impl Serialize`.** `Value`, structs, enums, `Vec<T>` — anything serde can serialize.
+- **Compile error on unsupported parameter types.** You find out at build time, not runtime.
 
-Supported types: `String`, `bool`, `f32/f64`, all integer primitives, `Vec<T>`, `Option<T>`.
+Supported parameter types: `String`, `bool`, `f32/f64`, all integer primitives, `Vec<T>`, `Option<T>`.
 
 ---
 
@@ -131,16 +132,15 @@ User prompt
 
 ### Context window management — automatic summarization
 
-Long conversations are compressed automatically. The default summarizer (`LlmSummarizer`) calls DeepSeek to write a concise semantic summary of older turns, replaces them with a single system message, and keeps the most recent turns verbatim. Your `with_system_prompt` messages are never touched.
+Long conversations are compressed automatically. The default summarizer (`LlmSummarizer`) calls the model to write a concise semantic summary of older turns, replaces them with a single system message, and keeps the most recent turns verbatim. Your `with_system_prompt` messages are never touched.
 
 ```rust
-use ds_api::{LlmSummarizer, ApiClient};
-
 // Default: trigger at ~60 000 estimated tokens, retain last 10 turns.
-let agent = DeepseekAgent::new(&token)
-    .with_summarizer(LlmSummarizer::new(ApiClient::new(&token)));
+let agent = DeepseekAgent::new(&token);
 
 // Custom thresholds:
+use ds_api::{LlmSummarizer, ApiClient};
+
 let agent = DeepseekAgent::new(&token)
     .with_summarizer(
         LlmSummarizer::new(ApiClient::new(&token))
@@ -179,6 +179,36 @@ loop {
 ```
 
 Full REPL with persistent conversation history. No cloning. No `Arc<Mutex<>>`.
+
+---
+
+### OpenAI-compatible providers
+
+`DeepseekAgent::custom(token, base_url, model)` points the agent at any OpenAI-compatible endpoint. The default `LlmSummarizer` is automatically configured to use the same provider and model — no extra setup needed.
+
+```rust
+use ds_api::{AgentEvent, DeepseekAgent};
+use futures::StreamExt;
+
+#[tokio::main]
+async fn main() {
+    let token = std::env::var("OPENROUTER_API_KEY").unwrap();
+
+    let mut agent = DeepseekAgent::custom(
+            &token,
+            "https://openrouter.ai/api/v1",
+            "meta-llama/llama-3.3-70b-instruct:free",
+        )
+        .with_streaming();
+
+    let mut stream = agent.chat("What is Rust's ownership model?");
+    while let Some(event) = stream.next().await {
+        if let Ok(AgentEvent::Token(text)) = event {
+            print!("{text}");
+        }
+    }
+}
+```
 
 ---
 
@@ -266,9 +296,9 @@ export DEEPSEEK_API_KEY=your_key_here
 
 ## Roadmap
 
-- OpenAI-compatible providers
+- ~~OpenAI-compatible providers~~
 - Structured output support
-- `#[tool]` support for custom `serde` types
+- `#[tool]` parameter types: custom `serde` structs (return types already support any `impl Serialize`)
 - More examples
 
 ---

@@ -114,7 +114,9 @@ pub(crate) fn raw_to_tool_call_info(tc: &ToolCall) -> ToolCallInfo {
 /// so the model can freely decide whether to call a tool.
 pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
     let history = agent.conversation.history().to_vec();
-    let mut req = ApiRequest::builder().messages(history);
+    let mut req = ApiRequest::builder()
+        .with_model(agent.model.clone())
+        .messages(history);
     for tool in &agent.tools {
         for raw in tool.raw_tools() {
             req = req.add_tool(raw);

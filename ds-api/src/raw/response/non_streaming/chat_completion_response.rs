@@ -9,7 +9,8 @@ pub struct ChatCompletionResponse {
     pub choices: Vec<Choice>,
     pub created: u64,
     pub model: Model,
-    pub system_fingerprint: String,
+    #[serde(default)]
+    pub system_fingerprint: Option<String>,
     #[serde(rename = "object")]
     pub object: ObjectType,
     pub usage: Usage,

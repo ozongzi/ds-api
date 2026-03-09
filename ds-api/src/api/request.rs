@@ -7,8 +7,10 @@ use crate::raw::{ChatCompletionRequest, Message, ResponseFormat, ResponseFormatT
 
 /// A safe, chainable request builder that wraps `ChatCompletionRequest`.
 ///
-/// It intentionally avoids exposing raw configuration enums (like `Model`) to
-/// callers. Use the provided helpers to pick models.
+/// Use [`with_model`][ApiRequest::with_model] to set an arbitrary model string,
+/// or the convenience constructors [`deepseek_chat`][ApiRequest::deepseek_chat]
+/// and [`deepseek_reasoner`][ApiRequest::deepseek_reasoner] for the standard
+/// DeepSeek models.
 #[derive(Debug)]
 pub struct ApiRequest {
     raw: ChatCompletionRequest,
@@ -22,8 +24,19 @@ impl ApiRequest {
         }
     }
 
-    pub fn model(mut self, model: crate::raw::Model) -> Self {
-        self.raw.model = model;
+    /// Set the model by string (builder-style).
+    ///
+    /// Accepts any model identifier — a named DeepSeek model or any
+    /// OpenAI-compatible model string:
+    ///
+    /// ```
+    /// use ds_api::ApiRequest;
+    ///
+    /// let req = ApiRequest::builder().with_model("deepseek-chat");
+    /// let req = ApiRequest::builder().with_model("gpt-4o");
+    /// ```
+    pub fn with_model(mut self, name: impl Into<String>) -> Self {
+        self.raw.model = crate::raw::Model::Custom(name.into());
         self
     }
 

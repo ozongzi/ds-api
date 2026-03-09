@@ -31,15 +31,21 @@ Example: DeepseekAgent with a minimal tool
 ```no_run
 use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
-use serde_json::json;
+use serde::Serialize;
 
 struct EchoTool;
 
+#[derive(Serialize)]
+struct EchoResponse {
+    echo: String,
+}
+
 #[tool]
 impl ds_api::Tool for EchoTool {
-    // Example tool method: echo a string back as JSON.
-    async fn echo(&self, input: String) -> serde_json::Value {
-        json!({ "echo": input })
+    /// Echo the input back.
+    /// input: the string to echo
+    async fn echo(&self, input: String) -> EchoResponse {
+        EchoResponse { echo: input }
     }
 }
 
@@ -77,6 +83,7 @@ pub use agent::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
 pub use api::{ApiClient, ApiRequest};
 pub use conversation::{Conversation, LlmSummarizer, SlidingWindowSummarizer};
 pub use error::ApiError;
+
 pub use tool_trait::Tool;
 
 pub use ds_api_macros::tool;
