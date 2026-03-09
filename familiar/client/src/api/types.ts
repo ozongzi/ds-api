@@ -59,16 +59,22 @@ export interface Message {
 
 // ─── WebSocket events ─────────────────────────────────────────────────────
 
-export type WsClientMsg = { token: string } | { content: string };
-
 export type WsServerEvent =
   | { type: "token"; content: string }
   | { type: "tool_call_start"; id: string; name: string }
   | { type: "tool_call_args_delta"; id: string; delta: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
   | { type: "tool_result"; id: string; name: string; result: unknown }
+  | { type: "user_interrupt"; content: string }
+  | { type: "aborted" }
   | { type: "done" }
   | { type: "error"; message: string };
+
+export type WsClientMsg =
+  | { token: string }
+  | { content: string }
+  | { type: "interrupt"; content: string }
+  | { type: "abort" };
 
 // ─── UI-only chat bubble ──────────────────────────────────────────────────
 

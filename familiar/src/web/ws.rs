@@ -192,69 +192,167 @@ async fn handle_socket(socket: WebSocket, state: AppState, conversation_id: Uuid
     let mut stream = agent.chat_from_history();
     let mut reply_buf = String::new();
 
-    while let Some(event) = stream.next().await {
-        let msg_text = match event {
-            Ok(AgentEvent::Token(token)) => {
-                reply_buf.push_str(&token);
-                json!({"type": "token", "content": token}).to_string()
-            }
-            Ok(AgentEvent::ToolCallStart { id, name }) => json!({
-                "type": "tool_call_start",
-                "id": id,
-                "name": name,
-            })
-            .to_string(),
-            Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
-                "type": "tool_call_args_delta",
-                "id": id,
-                "delta": delta,
-            })
-            .to_string(),
-            Ok(AgentEvent::ToolCall(info)) => json!({
-                "type": "tool_call",
-                "id": info.id,
-                "name": info.name,
-                "args": info.args,
-            })
-            .to_string(),
-            Ok(AgentEvent::ToolResult(res)) => json!({
-                "type": "tool_result",
-                "id": res.id,
-                "name": res.name,
-                "result": res.result,
-            })
-            .to_string(),
-            Err(e) => {
-                tracing::error!(conversation = %conversation_id, "agent error: {e}");
-                let _ = sender
-                    .send(Message::Text(
-                        json!({"type":"error","message": e.to_string()})
-                            .to_string()
-                            .into(),
-                    ))
-                    .await;
+    // While the agent is streaming we also need to listen for incoming client
+    // messages so the user can:
+    //   { "type": "interrupt", "content": "..." } — inject a message mid-stream
+    //   { "type": "abort" }                        — stop generation immediately
+    //
+    // We drive both concurrently with a simple select loop: on each iteration
+    // we poll the agent stream and the WebSocket receiver, prioritising agent
+    // events to keep latency low.
+    loop {
+        // Use a biased select: check agent stream first, then client messages.
+        tokio::select! {
+            biased;
 
-                if let Some(recovered) = stream.into_agent() {
-                    state_clone
-                        .with_chat_async(conversation_id, |entry| {
-                            entry.agent = Some(recovered);
-                        })
-                        .await;
-                }
-                return;
-            }
-        };
+            // ── Agent event ───────────────────────────────────────────────
+            agent_event = stream.next() => {
+                let Some(event) = agent_event else {
+                    // Stream finished normally.
+                    break;
+                };
 
-        if sender.send(Message::Text(msg_text.into())).await.is_err() {
-            // Client disconnected — recover agent and bail.
-            if let Some(recovered) = stream.into_agent() {
-                state_clone
-                    .with_chat_async(conversation_id, |entry| {
-                        entry.agent = Some(recovered);
+                let msg_text = match event {
+                    Ok(AgentEvent::Token(token)) => {
+                        reply_buf.push_str(&token);
+                        json!({"type": "token", "content": token}).to_string()
+                    }
+                    Ok(AgentEvent::ToolCallStart { id, name }) => json!({
+                        "type": "tool_call_start",
+                        "id": id,
+                        "name": name,
                     })
-                    .await;
+                    .to_string(),
+                    Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
+                        "type": "tool_call_args_delta",
+                        "id": id,
+                        "delta": delta,
+                    })
+                    .to_string(),
+                    Ok(AgentEvent::ToolCall(info)) => json!({
+                        "type": "tool_call",
+                        "id": info.id,
+                        "name": info.name,
+                        "args": info.args,
+                    })
+                    .to_string(),
+                    Ok(AgentEvent::ToolResult(res)) => json!({
+                        "type": "tool_result",
+                        "id": res.id,
+                        "name": res.name,
+                        "result": res.result,
+                    })
+                    .to_string(),
+                    Err(e) => {
+                        tracing::error!(conversation = %conversation_id, "agent error: {e}");
+                        let _ = sender
+                            .send(Message::Text(
+                                json!({"type":"error","message": e.to_string()})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await;
+                        if let Some(recovered) = stream.into_agent() {
+                            state_clone
+                                .with_chat_async(conversation_id, |entry| {
+                                    entry.agent = Some(recovered);
+                                })
+                                .await;
+                        }
+                        return;
+                    }
+                };
+
+                if sender.send(Message::Text(msg_text.into())).await.is_err() {
+                    // Client disconnected — recover agent and bail.
+                    if let Some(recovered) = stream.into_agent() {
+                        state_clone
+                            .with_chat_async(conversation_id, |entry| {
+                                entry.agent = Some(recovered);
+                            })
+                            .await;
+                    }
+                    return;
+                }
             }
-            return;
+
+            // ── Incoming client message during streaming ───────────────────
+            ws_msg = receiver.next() => {
+                let Some(Ok(Message::Text(txt))) = ws_msg else {
+                    // Socket closed or non-text frame — stop streaming.
+                    if let Some(recovered) = stream.into_agent() {
+                        state_clone
+                            .with_chat_async(conversation_id, |entry| {
+                                entry.agent = Some(recovered);
+                            })
+                            .await;
+                    }
+                    return;
+                };
+
+                let v: serde_json::Value = match serde_json::from_str(&txt) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                match v.get("type").and_then(|t| t.as_str()) {
+                    Some("abort") => {
+                        // Client wants to stop — recover agent, send aborted event, done.
+                        tracing::info!(conversation = %conversation_id, "client aborted stream");
+                        if let Some(recovered) = stream.into_agent() {
+                            state_clone
+                                .with_chat_async(conversation_id, |entry| {
+                                    entry.agent = Some(recovered);
+                                })
+                                .await;
+                        }
+                        let _ = sender
+                            .send(Message::Text(
+                                json!({"type": "aborted"}).to_string().into(),
+                            ))
+                            .await;
+                        // Persist whatever we accumulated so far.
+                        if !reply_buf.is_empty() {
+                            use ds_api::raw::request::message::{Message as AgentMessage, Role};
+                            let msg = AgentMessage::new(Role::Assistant, &reply_buf);
+                            state_clone.persist_message(conversation_id, &msg);
+                        }
+                        return;
+                    }
+                    Some("interrupt") => {
+                        // Inject a user message into the running agent via the interrupt channel.
+                        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                            if !content.trim().is_empty() {
+                                tracing::info!(
+                                    conversation = %conversation_id,
+                                    "client interrupt: {content}"
+                                );
+                                state_clone
+                                    .with_chat_async(conversation_id, |entry| {
+                                        let _ = entry.interrupt_tx.send(content.to_string());
+                                    })
+                                    .await;
+                                // Echo it back as a user bubble so the UI shows it inline.
+                                let _ = sender
+                                    .send(Message::Text(
+                                        json!({
+                                            "type": "user_interrupt",
+                                            "content": content,
+                                        })
+                                        .to_string()
+                                        .into(),
+                                    ))
+                                    .await;
+                                // Persist the interrupt message.
+                                use ds_api::raw::request::message::{Message as AgentMessage, Role};
+                                let msg = AgentMessage::new(Role::User, content);
+                                state_clone.persist_message(conversation_id, &msg);
+                            }
+                        }
+                    }
+                    _ => {} // ignore unknown message types during streaming
+                }
+            }
         }
     }
 

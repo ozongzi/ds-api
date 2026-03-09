@@ -21,8 +21,16 @@ export function ChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  const { bubbles, status, errorMsg, send, setHistory, clearBubbles } =
-    useChat(activeId, token);
+  const {
+    bubbles,
+    status,
+    errorMsg,
+    send,
+    interrupt,
+    abort,
+    setHistory,
+    clearBubbles,
+  } = useChat(activeId, token);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -80,14 +88,14 @@ export function ChatPage() {
         setActiveId(null);
       }
     },
-    [deleteConversation, activeId]
+    [deleteConversation, activeId],
   );
 
   const handleRename = useCallback(
     async (id: string, name: string) => {
       await renameConversation(id, name);
     },
-    [renameConversation]
+    [renameConversation],
   );
 
   const handleSend = useCallback(
@@ -95,8 +103,19 @@ export function ChatPage() {
       if (!activeId) return;
       send(text);
     },
-    [activeId, send]
+    [activeId, send],
   );
+
+  const handleInterrupt = useCallback(
+    (text: string) => {
+      interrupt(text);
+    },
+    [interrupt],
+  );
+
+  const handleAbort = useCallback(() => {
+    abort();
+  }, [abort]);
 
   // ── Derive UI state ───────────────────────────────────────────────────────
 
@@ -172,12 +191,13 @@ export function ChatPage() {
         {/* Input */}
         <ChatInput
           onSend={handleSend}
-          disabled={!activeId || isStreaming}
+          onInterrupt={handleInterrupt}
+          onAbort={handleAbort}
+          streaming={isStreaming}
+          disabled={!activeId}
           placeholder={
             !activeId
               ? "请先选择或新建一个对话"
-              : isStreaming
-              ? "正在生成回复…"
               : "发消息… (Enter 发送，Shift+Enter 换行)"
           }
         />

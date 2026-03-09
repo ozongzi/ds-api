@@ -8,6 +8,9 @@ import type {
 
 type ChatStatus = "idle" | "connecting" | "streaming" | "error";
 
+// During streaming the user can either inject a message mid-run or abort.
+export type InterruptMode = "interrupt" | "abort";
+
 function uid() {
   return Math.random().toString(36).slice(2);
 }
@@ -18,6 +21,8 @@ export function useChat(conversationId: string | null, token: string | null) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  // Stable ref so abort/interrupt callbacks never go stale.
+  const wsLiveRef = useRef<WebSocket | null>(null);
 
   // Key of the assistant TextBubble that is currently accumulating tokens.
   // null means no active text segment yet (next token will create one).
@@ -92,6 +97,34 @@ export function useChat(conversationId: string | null, token: string | null) {
     setErrorMsg(null);
   }, []);
 
+  // ── Interrupt / abort (usable while streaming) ─────────────────────────
+
+  const interrupt = useCallback((text: string) => {
+    const ws = wsLiveRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (statusRef.current !== "streaming") return;
+
+    // Show the injected message immediately as a user bubble.
+    const userBubble: TextBubble = {
+      kind: "text",
+      key: uid(),
+      role: "user",
+      content: text,
+      streaming: false,
+    };
+    setBubbles((prev) => [...prev, userBubble]);
+
+    ws.send(JSON.stringify({ type: "interrupt", content: text }));
+  }, []);
+
+  const abort = useCallback(() => {
+    const ws = wsLiveRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "abort" }));
+  }, []);
+
+  // ── Open a new WebSocket turn ──────────────────────────────────────────
+
   const send = useCallback(
     (text: string) => {
       if (!conversationId || !token) return;
@@ -121,6 +154,7 @@ export function useChat(conversationId: string | null, token: string | null) {
         `${wsProtocol}://${location.host}/ws/${conversationId}`,
       );
       wsRef.current = ws;
+      wsLiveRef.current = ws;
 
       ws.addEventListener("open", () => {
         ws.send(JSON.stringify({ token }));
@@ -138,7 +172,18 @@ export function useChat(conversationId: string | null, token: string | null) {
           return;
         }
 
-        if (event.type === "token") {
+        if (event.type === "user_interrupt") {
+          // Server echoes back the injected message — we already showed it
+          // optimistically in interrupt(), so just ignore the echo.
+          return;
+        } else if (event.type === "aborted") {
+          sealActiveText();
+          updateStatus("idle");
+          ws.close(1000);
+          wsRef.current = null;
+          wsLiveRef.current = null;
+          return;
+        } else if (event.type === "token") {
           // Append to the current active text segment, creating one if needed.
           const key = ensureActiveText();
           setBubbles((prev) =>
@@ -214,6 +259,7 @@ export function useChat(conversationId: string | null, token: string | null) {
           updateStatus("idle");
           ws.close(1000);
           wsRef.current = null;
+          wsLiveRef.current = null;
         } else if (event.type === "error") {
           // Remove the current (possibly empty) active text bubble on error.
           const key = activeTextKeyRef.current;
@@ -225,6 +271,7 @@ export function useChat(conversationId: string | null, token: string | null) {
           setErrorMsg(event.message);
           ws.close(1000);
           wsRef.current = null;
+          wsLiveRef.current = null;
         }
       });
 
@@ -237,10 +284,12 @@ export function useChat(conversationId: string | null, token: string | null) {
         updateStatus("error");
         setErrorMsg("连接出错，请重试");
         wsRef.current = null;
+        wsLiveRef.current = null;
       });
 
       ws.addEventListener("close", (ev) => {
         wsRef.current = null;
+        wsLiveRef.current = null;
         // Only treat as an error if the close was abnormal AND we are still
         // in the streaming state (i.e. done/error has not already handled it).
         if (
@@ -261,18 +310,12 @@ export function useChat(conversationId: string | null, token: string | null) {
     [conversationId, token],
   );
 
-  const abort = useCallback(() => {
-    wsRef.current?.close(1000);
-    wsRef.current = null;
-    sealActiveText();
-    updateStatus("idle");
-  }, []);
-
   return {
     bubbles,
     status,
     errorMsg,
     send,
+    interrupt,
     abort,
     setHistory,
     clearBubbles,

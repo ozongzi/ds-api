@@ -96,6 +96,48 @@
     cursor: not-allowed;
 }
 
+/* ─── Interrupt mode (streaming + has text) ──────────────────────────────── */
+
+.sendBtnInterrupt {
+    background: #1a5fa6;
+}
+
+.sendBtnInterrupt:hover:not(:disabled) {
+    background: #154e8a;
+}
+
+/* ─── Abort button (streaming + no text) ─────────────────────────────────── */
+
+.abortBtn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    align-self: flex-end;
+    transition:
+        background var(--transition),
+        color var(--transition),
+        border-color var(--transition),
+        transform var(--transition);
+}
+
+.abortBtn:hover {
+    background: var(--danger-dim);
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.abortBtn:active {
+    transform: scale(0.93);
+}
+
 /* ─── Hint text ──────────────────────────────────────────────────────────── */
 
 .hint {
