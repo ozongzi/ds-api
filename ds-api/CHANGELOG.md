@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6] - 2026-03-10
+
+### Summary
+
+New `mcp` optional feature: connect any MCP server's tools to `DeepseekAgent` with a single dependency line.
+
+### New features
+
+**`McpTool` — MCP client support (`features = ["mcp"]`)**
+
+- New `ds_api::McpTool` implements the `Tool` trait and can be passed directly to `DeepseekAgent::add_tool()`.
+- Two transports supported:
+  - `McpTool::stdio(program, args)` — spawns a child process (`npx`, `uvx`, or any binary) and communicates over stdin/stdout.
+  - `McpTool::http(url)` — connects to a remote MCP server over Streamable HTTP.
+- At construction time, `tools/list` is called automatically (pagination handled transparently) and the tool list is cached. Each subsequent model tool call is forwarded via `tools/call`.
+- The MCP server's `inputSchema` is passed through as-is to the DeepSeek API `parameters` field — no manual schema configuration needed.
+- New `ds_api::mcp::McpError` error type covering process spawn failure, handshake failure, tool list fetch failure, and tool call failure.
+
+**Usage**
+
+```toml
+[dependencies]
+ds-api = { version = "0.5", features = ["mcp"] }
+```
+
+```rust
+use ds_api::{DeepseekAgent, McpTool};
+
+let agent = DeepseekAgent::new(token)
+    .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await?)
+    .add_tool(McpTool::stdio("uvx", &["mcp-server-git"]).await?)
+    .add_tool(McpTool::http("https://mcp.example.com/").await?);
+```
+
 ## [0.5.4] - 2026-03-09
 
 ### Summary

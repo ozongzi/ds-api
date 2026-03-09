@@ -152,6 +152,8 @@ pub mod agent;
 pub mod api;
 pub mod conversation;
 pub mod error;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod raw; // raw types remain accessible via `ds_api::raw` but are not the primary public API
 pub mod tool_trait;
 
@@ -163,3 +165,6 @@ pub use error::ApiError;
 pub use tool_trait::Tool;
 
 pub use ds_api_macros::tool;
+
+#[cfg(feature = "mcp")]
+pub use mcp::McpTool;

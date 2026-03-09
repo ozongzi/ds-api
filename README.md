@@ -294,6 +294,35 @@ export DEEPSEEK_API_KEY=your_key_here
 
 ---
 
+## MCP — Model Context Protocol
+
+Enable the `mcp` feature to connect any MCP server's tools directly to `DeepseekAgent` — no glue code required.
+
+```toml
+[dependencies]
+ds-api = { version = "0.5", features = ["mcp"] }
+```
+
+```rust
+use ds_api::{DeepseekAgent, McpTool};
+
+#[tokio::main]
+async fn main() {
+    let agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
+        // Local process over stdio — npx, uvx, or any binary
+        .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await.unwrap())
+        .add_tool(McpTool::stdio("uvx", &["mcp-server-git"]).await.unwrap())
+        // Remote server over Streamable HTTP
+        .add_tool(McpTool::http("https://mcp.example.com/").await.unwrap());
+}
+```
+
+`McpTool` fetches the tool list from the server at construction time (pagination handled automatically) and forwards every model tool call to the MCP server at runtime. The server's `inputSchema` is passed to the model as-is — no manual schema configuration needed.
+
+Without `features = ["mcp"]`, `rmcp` is never pulled in and the compiled output is identical to `0.5.5`.
+
+---
+
 ## Roadmap
 
 - ~~OpenAI-compatible providers~~
