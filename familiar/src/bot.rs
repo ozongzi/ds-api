@@ -184,7 +184,8 @@ async fn handle_turn(
             }
 
             // ── Tool call starting ────────────────────────────────────────────
-            Ok(AgentEvent::ToolCall(info)) => {
+            // bot.rs runs without streaming, so each ToolCall carries the full args in delta.
+            Ok(AgentEvent::ToolCall(c)) => {
                 // Flush whatever text has accumulated before this tool call.
                 if !reply_buf.is_empty() {
                     let display = truncate_for_discord(&reply_buf);
@@ -200,15 +201,14 @@ async fn handle_turn(
                     placeholder_used = true;
                 }
 
-                let args_str = info.args.to_string();
-                let args_preview = if args_str.len() > 900 {
-                    format!("{}…", &args_str[..900])
+                let args_preview = if c.delta.len() > 900 {
+                    format!("{}…", &c.delta[..900])
                 } else {
-                    args_str
+                    c.delta.clone()
                 };
 
                 let embed = CreateEmbed::new()
-                    .title(format!("⚙️ {}", info.name))
+                    .title(format!("⚙️ {}", c.name))
                     .description(format!("```json\n{}\n```", args_preview))
                     .colour(0x5865F2);
 
@@ -217,7 +217,7 @@ async fn handle_turn(
                     .await
                 {
                     Ok(m) => {
-                        tool_messages.insert(info.id.clone(), m);
+                        tool_messages.insert(c.id.clone(), m);
                     }
                     Err(e) => error!("failed to send tool call embed: {e}"),
                 }

@@ -19,6 +19,6 @@ pub mod agent_core;
 pub(crate) mod executor;
 pub mod stream;
 
-pub use agent_core::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
+pub use agent_core::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult};
 pub use stream::AgentStream;
 pub use tokio::sync::mpsc::UnboundedSender as InterruptSender;

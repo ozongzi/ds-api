@@ -32,7 +32,7 @@ async fn get_json(url: &str) -> Result<Value, String> {
 /// Given any URL belonging to an agent (root or a sub-path like /api/a2a),
 /// walk up the path segments until we find a /.well-known/agent.json that
 /// returns 200, then return (card_json, origin) where origin is the scheme+host
-/// root (e.g. "https://celofx.vercel.app"). Returns an Err string if not found.
+/// root. Returns an Err string if not found.
 async fn fetch_agent_card(url: &str) -> Result<(Value, String), String> {
     // Parse out the origin (scheme + host, no path)
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("无效 URL '{url}': {e}"))?;

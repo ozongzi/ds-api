@@ -27,54 +27,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## DeepseekAgent with a minimal tool
+## Agent with a tool
 ```no_run
 use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
-use serde::Serialize;
+use serde_json::{Value, json};
 
 struct EchoTool;
-
-#[derive(Serialize)]
-struct EchoResponse {
-    echo: String,
-}
 
 #[tool]
 impl ds_api::Tool for EchoTool {
     /// Echo the input back.
     /// input: the string to echo
-    async fn echo(&self, input: String) -> EchoResponse {
-        EchoResponse { echo: input }
+    async fn echo(&self, input: String) -> Value {
+        json!({ "echo": input })
     }
 }
 
 #[tokio::main]
 async fn main() {
-    // Ensure DEEPSEEK_API_KEY is set in your environment before running this example.
     let token = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set");
-    let agent = DeepseekAgent::new(token).add_tool(EchoTool);
-
-    // The agent returns a stream of `AgentEvent` items. Each variant represents
-    // a distinct event: assistant text, a tool call request, or a tool result.
-    let mut s = agent.chat("Please echo: hello");
-    while let Some(event) = s.next().await {
+    let mut stream = DeepseekAgent::new(token).add_tool(EchoTool).chat("Please echo: hello");
+    while let Some(event) = stream.next().await {
         match event {
             Err(e) => { eprintln!("Error: {e}"); break; }
-            Ok(AgentEvent::Token(text)) => println!("Assistant: {}", text),
-            Ok(AgentEvent::ToolCall(c)) => println!("Tool call: {}({})", c.name, c.args),
-            Ok(AgentEvent::ToolResult(r)) => println!("Result: {} -> {}", r.name, r.result),
+            Ok(AgentEvent::Token(text))   => println!("Assistant: {text}"),
+            Ok(AgentEvent::ToolCall(c))   => println!("calling {}({})", c.name, c.delta),
+            Ok(AgentEvent::ToolResult(r)) => println!("result: {} -> {}", r.name, r.result),
+            Ok(_) => {}
         }
     }
 }
 ```
 
-## Injecting user messages mid-loop
+## Injecting messages mid-run
 
-Use [`DeepseekAgent::with_interrupt_channel`] to get an [`InterruptSender`].
-Send messages through it at any time; they are picked up automatically after
-the current tool-execution round and appended to the conversation history as
-`Role::User` before the next API turn.
+[`DeepseekAgent::with_interrupt_channel`] returns a sender you can use to push
+messages into the agent while it's still running. Messages are picked up after
+the current tool-execution round and added to the conversation before the next
+API turn.
 
 ```no_run
 use ds_api::{AgentEvent, DeepseekAgent, tool};
@@ -114,8 +105,9 @@ async fn main() {
         match event {
             Err(e) => { eprintln!("Error: {e}"); break; }
             Ok(AgentEvent::Token(text))   => print!("{text}"),
-            Ok(AgentEvent::ToolCall(c))   => println!("\n[calling {}]", c.name),
+            Ok(AgentEvent::ToolCall(c))   => { if c.delta.is_empty() { println!("\n[calling {}]", c.name) } }
             Ok(AgentEvent::ToolResult(r)) => println!("\n[result] {}", r.result),
+            Ok(_) => {}
         }
     }
 }
@@ -157,7 +149,7 @@ pub mod mcp;
 pub mod raw; // raw types remain accessible via `ds_api::raw` but are not the primary public API
 pub mod tool_trait;
 
-pub use agent::{AgentEvent, DeepseekAgent, ToolCallInfo, ToolCallResult};
+pub use agent::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult};
 pub use api::{ApiClient, ApiRequest};
 pub use conversation::{Conversation, LlmSummarizer, SlidingWindowSummarizer};
 pub use error::ApiError;

@@ -1,4 +1,4 @@
-use ds_api::{DeepseekAgent, tool};
+use ds_api::{AgentEvent, DeepseekAgent, tool};
 use futures::StreamExt;
 use serde_json::json;
 
@@ -23,6 +23,24 @@ async fn main() {
     let mut stream = agent.chat("Please echo: hello");
 
     while let Some(event) = stream.next().await {
-        println!("{:#?}", event);
+        match event {
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                break;
+            }
+            Ok(AgentEvent::Token(text)) => {
+                println!("Assistant: {}", text);
+            }
+            Ok(AgentEvent::ReasoningToken(text)) => {
+                println!("[reasoning] {}", text);
+            }
+            Ok(AgentEvent::ToolCall(c)) => {
+                if c.delta.is_empty() { println!("[tool call start] {} (id={})", c.name, c.id); }
+                else { println!("[tool call args] {}: {}", c.id, c.delta); }
+            }
+            Ok(AgentEvent::ToolResult(res)) => {
+                println!("[tool result] {} -> {}", res.name, res.result);
+            }
+        }
     }
 }

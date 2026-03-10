@@ -88,13 +88,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Ok(AgentEvent::ToolCall(c)) => {
-                println!("\n[calling {}({})]", c.name, c.args);
+                if c.delta.is_empty() { println!("\n[calling {}]", c.name); }
             }
 
             Ok(AgentEvent::ToolResult(r)) => {
                 println!("\n[tool result] {} -> {}", r.name, r.result);
                 println!("\n(injected message will be picked up before the next API turn)\n");
             }
+
+            Ok(_) => todo!(),
         }
     }
 

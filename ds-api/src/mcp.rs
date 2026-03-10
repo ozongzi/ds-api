@@ -10,7 +10,7 @@
 //! # Usage
 //!
 //! [`McpTool`] wraps an MCP server — either a local process (stdio) or a remote
-//! HTTP endpoint — and implements [`Tool`][crate::Tool] so it can be registered
+//! HTTP endpoint — and implements [`Tool`] so it can be registered
 //! directly with [`DeepseekAgent::add_tool`][crate::DeepseekAgent::add_tool].
 //!
 //! Every tool the MCP server advertises is forwarded to the agent automatically;

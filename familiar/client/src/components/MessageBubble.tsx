@@ -166,7 +166,10 @@ function ToolCallBubble({
 
   // ── All declarations and hooks must come before any early returns ──────────
 
-  const args = bubble.args as Record<string, unknown> | null;
+  const args = useMemo(() => {
+    if (!bubble.argsRaw) return null;
+    try { return JSON.parse(bubble.argsRaw) as Record<string, unknown>; } catch { return null; }
+  }, [bubble.argsRaw]);
   const result = bubble.result as Record<string, unknown> | null;
 
   // Detect present_file result
@@ -212,10 +215,8 @@ function ToolCallBubble({
   const isInline = isTerminal || isEditTool;
 
   // Streaming args display (generic view only)
-  const argsStr = bubble.args
-    ? JSON.stringify(bubble.args, null, 2)
-    : bubble.argsRaw || "";
-  const argsStreaming = !bubble.args && bubble.argsRaw.length > 0;
+  const argsStr = args ? JSON.stringify(args, null, 2) : bubble.argsRaw || "";
+  const argsStreaming = !args && bubble.argsRaw.length > 0;
   const resultStr =
     !isInline && bubble.result && !fileResult
       ? JSON.stringify(bubble.result, null, 2)

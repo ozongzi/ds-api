@@ -54,8 +54,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     print!("{text}");
                     io::stdout().flush().ok();
                 }
+                Ok(AgentEvent::ReasoningToken(text)) => {
+                    print!("{text}");
+                    io::stdout().flush().ok();
+                }
                 Ok(AgentEvent::ToolCall(c)) => {
-                    println!("\n[tool call: {}({})]", c.name, c.args);
+                    if c.delta.is_empty() {
+                        println!("\n[calling {}  id={}]", c.name, c.id);
+                    } else {
+                        print!("{}", c.delta);
+                        io::stdout().flush().ok();
+                    }
                 }
                 Ok(AgentEvent::ToolResult(r)) => {
                     println!("\n[tool result: {} -> {}]", r.name, r.result);

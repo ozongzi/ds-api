@@ -403,21 +403,11 @@ async fn run_generation(
                         reply_buf.push_str(&token);
                         json!({"type": "token", "content": token}).to_string()
                     }
-                    Ok(AgentEvent::ToolCallStart { id, name }) => json!({
-                        "type": "tool_call_start",
-                        "id": id,
-                        "name": name,
-                    }).to_string(),
-                    Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => json!({
-                        "type": "tool_call_args_delta",
-                        "id": id,
-                        "delta": delta,
-                    }).to_string(),
-                    Ok(AgentEvent::ToolCall(info)) => json!({
+                    Ok(AgentEvent::ToolCall(c)) => json!({
                         "type": "tool_call",
-                        "id": info.id,
-                        "name": info.name,
-                        "args": info.args,
+                        "id": c.id,
+                        "name": c.name,
+                        "delta": c.delta,
                     }).to_string(),
                     Ok(AgentEvent::ToolResult(res)) => json!({
                         "type": "tool_result",

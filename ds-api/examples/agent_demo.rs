@@ -50,7 +50,11 @@ async fn main() {
                 break;
             }
             Ok(AgentEvent::Token(text)) => println!("Assistant: {}", text),
-            Ok(AgentEvent::ToolCall(c)) => println!("Tool call {}({})", c.name, c.args),
+            Ok(AgentEvent::ReasoningToken(text)) => println!("Reasoning: {}", text),
+            Ok(AgentEvent::ToolCall(c)) => {
+                if c.delta.is_empty() { println!("Tool call start: {} (id={})", c.name, c.id) }
+                else { println!("Tool call {}({})", c.name, c.delta) }
+            }
             Ok(AgentEvent::ToolResult(r)) => println!("-> {}", r.result),
         }
     }
@@ -79,7 +83,11 @@ async fn main() {
             // In streaming mode each Token is a single text fragment —
             // print without a newline to show them inline.
             Ok(AgentEvent::Token(text)) => print!("{}", text),
-            Ok(AgentEvent::ToolCall(c)) => println!("\n[calling {}({})]", c.name, c.args),
+            Ok(AgentEvent::ReasoningToken(text)) => print!("{}", text),
+            Ok(AgentEvent::ToolCall(c)) => {
+                if c.delta.is_empty() { println!("\n[calling {}  id={}]", c.name, c.id) }
+                else { print!("{}", c.delta) }
+            }
             Ok(AgentEvent::ToolResult(r)) => println!("[result] {}", r.result),
         }
     }

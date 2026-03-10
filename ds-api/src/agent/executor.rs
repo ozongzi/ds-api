@@ -10,7 +10,6 @@
 //! | [`fetch_response`] | Non-streaming API call; returns content + raw tool calls. |
 //! | [`connect_stream`] | Open an SSE stream and hand back the `BoxStream`. |
 //! | [`execute_tools`] | Dispatch all pending tool calls and collect results. |
-//! | [`raw_to_tool_call_info`] | Convert a raw [`ToolCall`] wire object to [`ToolCallInfo`]. |
 //!
 //! The streaming state machine in [`stream`][super::stream] is the only consumer of
 //! this module; nothing in here knows about [`Poll`] or [`Context`].  That separation
@@ -20,7 +19,7 @@
 use futures::stream::BoxStream;
 use serde_json::Value;
 
-use crate::agent::agent_core::{DeepseekAgent, ToolCallInfo, ToolCallResult};
+use crate::agent::agent_core::{DeepseekAgent, ToolCallResult};
 use crate::api::ApiRequest;
 use crate::error::ApiError;
 use crate::raw::ChatCompletionChunk;
@@ -74,10 +73,10 @@ pub(crate) enum ChunkEvent {
     Token(String),
     /// A reasoning/thinking fragment (deepseek-reasoner).
     ReasoningToken(String),
-    /// A tool call's id and name became known for the first time.
-    ToolCallStart { id: String, name: String },
-    /// An incremental fragment of a tool call's arguments JSON.
-    ToolCallArgsDelta { id: String, delta: String },
+    /// A tool call chunk: `(id, name, delta)`.  First emission has empty `delta`
+    /// and is the signal that a new tool call has started; subsequent emissions
+    /// carry incremental argument JSON fragments.
+    ToolCallChunk { id: String, name: String, delta: String },
 }
 
 // ── Type aliases for futures returned by this module ─────────────────────────
@@ -108,18 +107,6 @@ pub(crate) type SummarizeFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = DeepseekAgent> + Send>>;
 
 // ── Public helpers ────────────────────────────────────────────────────────────
-
-/// Convert a raw wire-format [`ToolCall`] into the public [`ToolCallInfo`] type.
-///
-/// Arguments are parsed from their JSON string representation; malformed JSON
-/// falls back to `Value::Null` rather than propagating an error.
-pub(crate) fn raw_to_tool_call_info(tc: &ToolCall) -> ToolCallInfo {
-    ToolCallInfo {
-        id: tc.id.clone(),
-        name: tc.function.name.clone(),
-        args: serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null),
-    }
-}
 
 // ── Business-logic functions ──────────────────────────────────────────────────
 
@@ -261,7 +248,7 @@ pub(crate) async fn execute_tools(
         results.push(ToolCallResult {
             id: tc.id,
             name: tc.function.name,
-            args,
+            args: tc.function.arguments,
             result,
         });
     }
@@ -355,9 +342,10 @@ pub(crate) fn apply_chunk_delta(
                     .as_ref()
                     .and_then(|f| f.name.clone())
                     .unwrap_or_default();
-                events.push(ChunkEvent::ToolCallStart {
+                events.push(ChunkEvent::ToolCallChunk {
                     id: id.clone(),
                     name: name.clone(),
+                    delta: String::new(),
                 });
                 *entry = Some(PartialToolCall {
                     id,
@@ -376,8 +364,9 @@ pub(crate) fn apply_chunk_delta(
                     && !args.is_empty()
                 {
                     partial.arguments.push_str(&args);
-                    events.push(ChunkEvent::ToolCallArgsDelta {
+                    events.push(ChunkEvent::ToolCallChunk {
                         id: partial.id.clone(),
+                        name: partial.name.clone(),
                         delta: args,
                     });
                 }

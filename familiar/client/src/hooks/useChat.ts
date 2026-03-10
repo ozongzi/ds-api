@@ -169,33 +169,9 @@ export function useChat(conversationId: string | null, token: string | null) {
             : b,
         ),
       );
-    } else if (event.type === "tool_call_start") {
-      sealActiveText();
-      const toolBubble: ToolBubble = {
-        kind: "tool",
-        key: `tool-${event.id}`,
-        role: "tool",
-        name: event.name,
-        args: null,
-        argsRaw: "",
-        result: null,
-        pending: true,
-      };
-      setBubbles((prev) => {
-        // Avoid duplicates during replay.
-        if (prev.some((b) => b.key === `tool-${event.id}`)) return prev;
-        return [...prev, toolBubble];
-      });
-    } else if (event.type === "tool_call_args_delta") {
-      setBubbles((prev) =>
-        prev.map((b) =>
-          b.key === `tool-${event.id}` && b.kind === "tool"
-            ? { ...b, argsRaw: b.argsRaw + event.delta }
-            : b,
-        ),
-      );
     } else if (event.type === "tool_call") {
-      sealActiveText();
+      // First chunk (delta === "") creates the bubble; subsequent chunks append.
+      // Non-streaming: single event with full args in delta, also goes through the create path.
       setBubbles((prev) => {
         const exists = prev.some(
           (b) => b.key === `tool-${event.id}` && b.kind === "tool",
@@ -203,17 +179,17 @@ export function useChat(conversationId: string | null, token: string | null) {
         if (exists) {
           return prev.map((b) =>
             b.key === `tool-${event.id}` && b.kind === "tool"
-              ? { ...b, args: event.args }
+              ? { ...b, argsRaw: b.argsRaw + event.delta }
               : b,
           );
         }
+        sealActiveText();
         const toolBubble: ToolBubble = {
           kind: "tool",
           key: `tool-${event.id}`,
           role: "tool",
           name: event.name,
-          args: event.args,
-          argsRaw: "",
+          argsRaw: event.delta,
           result: null,
           pending: true,
         };

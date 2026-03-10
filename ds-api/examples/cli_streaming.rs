@@ -85,8 +85,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     print!("{fragment}");
                     io::stdout().flush().ok();
                 }
+                Ok(AgentEvent::ReasoningToken(fragment)) => {
+                    // Reasoning tokens are emitted for intermediate reasoning content.
+                    // Print them inline like normal token fragments.
+                    print!("{fragment}");
+                    io::stdout().flush().ok();
+                }
                 Ok(AgentEvent::ToolCall(c)) => {
-                    println!("\n[calling {}({})]", c.name, c.args);
+                    if c.delta.is_empty() {
+                        println!("\n[calling {}  id={}]", c.name, c.id);
+                    } else {
+                        print!("{}", c.delta);
+                        io::stdout().flush().ok();
+                    }
                 }
                 Ok(AgentEvent::ToolResult(r)) => {
                     println!("\n[tool result] {} -> {}", r.name, r.result);

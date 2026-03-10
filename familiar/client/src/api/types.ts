@@ -62,9 +62,7 @@ export interface Message {
 export type WsServerEvent =
   | { type: "token"; content: string }
   | { type: "reasoning_token"; content: string }
-  | { type: "tool_call_start"; id: string; name: string }
-  | { type: "tool_call_args_delta"; id: string; delta: string }
-  | { type: "tool_call"; id: string; name: string; args: unknown }
+  | { type: "tool_call"; id: string; name: string; delta: string }
   | { type: "tool_result"; id: string; name: string; result: unknown }
   | { type: "user_interrupt"; content: string }
   | { type: "aborted" }
@@ -95,9 +93,7 @@ export interface ToolBubble {
   key: string;
   role: "tool";
   name: string;
-  /** Fully parsed args object, set when tool_call (final) event arrives */
-  args: unknown;
-  /** Raw args JSON string being streamed in character by character */
+  /** Accumulated args JSON string; complete (parseable) once all chunks arrive. */
   argsRaw: string;
   result: unknown | null;
   /** Still waiting for the tool_result event */

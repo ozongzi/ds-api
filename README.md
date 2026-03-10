@@ -4,31 +4,26 @@
 [![docs.rs](https://img.shields.io/docsrs/ds-api)](https://docs.rs/ds-api)
 [![license](https://img.shields.io/crates/l/ds-api.svg)](https://github.com/ozongzi/ds-api/blob/main/LICENSE-MIT)
 
-**Your Rust functions. Any LLM. Zero glue code.**
-
-```
-cargo add ds-api
-```
+A Rust SDK for building LLM agents on top of DeepSeek (and any OpenAI-compatible API). Define tools in plain Rust, plug them into an agent, and consume a stream of events as the model thinks, calls tools, and responds.
 
 ---
 
-## The Problem
+## Quickstart
 
-Building an LLM agent means writing a pile of code that has nothing to do with your actual problem:
+Set your API key and add the dependency:
 
-- Hand-craft JSON schemas for every tool
-- Parse and validate tool arguments from raw JSON
-- Detect tool calls in the response
-- Implement an agent loop that re-sends results to the model
-- Wire up streaming yourself
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
 
-Every project. Every time.
-
----
-
-## The Solution
-
-One macro. Your methods become AI tools.
+```toml
+# Cargo.toml
+[dependencies]
+ds-api  = "0.6.0"
+futures = "0.3"
+tokio   = { version = "1", features = ["full"] }
+serde   = { version = "1", features = ["derive"] }
+```
 
 ```rust
 use ds_api::{AgentEvent, DeepseekAgent, tool};
@@ -38,299 +33,169 @@ use serde_json::{Value, json};
 struct Search;
 
 #[tool]
-impl Tool for Search {
-    /// Search the web for a query.
+impl ds_api::Tool for Search {
+    /// Search the web and return results.
     /// query: the search query
     async fn search(&self, query: String) -> Value {
-        json!({ "results": format!("top results for: {query}") })
+        json!({ "results": format!("results for: {query}") })
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
-        .add_tool(Search);
+    let token = std::env::var("DEEPSEEK_API_KEY").unwrap();
 
-    let mut stream = agent.chat("What is Rust's ownership model?");
+    let mut stream = DeepseekAgent::new(token)
+        .add_tool(Search)
+        .chat("What's the latest news about Rust?");
 
     while let Some(event) = stream.next().await {
-        match event {
-            Ok(AgentEvent::Token(text))   => print!("{text}"),
-            Ok(AgentEvent::ToolCall(c))   => println!("\n[→ {}({})]", c.name, c.args),
-            Ok(AgentEvent::ToolResult(r)) => println!("[✓ {}]", r.result),
-            Err(e)                        => eprintln!("error: {e}"),
+        match event.unwrap() {
+            AgentEvent::Token(text)       => print!("{text}"),
+            AgentEvent::ToolCall(c)       => println!("\n[calling {}]", c.name),
+            AgentEvent::ToolResult(r)     => println!("[result] {}", r.result),
+            AgentEvent::ReasoningToken(t) => print!("{t}"),
         }
     }
 }
 ```
 
-No schema. No argument parsing. No loop. Just your function.
+The agent runs the full loop for you: it calls the model, dispatches any tool calls, feeds the results back, and keeps going until the model stops requesting tools.
 
 ---
 
-## Key Features
+## Defining tools
 
-### `#[tool]` — Zero-boilerplate tool registration
+Annotate an `impl Tool for YourStruct` block with `#[tool]`. Each method becomes a callable tool:
 
-Annotate any `async fn`. The macro reads your doc comments, infers the JSON schema from your types, and registers everything automatically.
-
-```rust
-#[tool]
-impl Tool for Database {
-    /// Query the database and return matching rows.
-    /// sql: SQL query to execute
-    /// limit: maximum number of rows to return
-    async fn query(&self, sql: String, limit: Option<u32>) -> Vec<Row> {
-        // your real implementation — any impl Serialize works as return type
-    }
-}
-```
-
-- **Doc comment → tool description.** No separate description field.
-- **`param: description` in doc → parameter description.** Inline.
-- **`Option<T>` → optional parameter.** The schema marks it non-required automatically.
-- **Return any `impl Serialize`.** `Value`, structs, enums, `Vec<T>` — anything serde can serialize.
-- **Compile error on unsupported parameter types.** You find out at build time, not runtime.
-
-Supported parameter types: `String`, `bool`, `f32/f64`, all integer primitives, `Vec<T>`, `Option<T>`.
-
----
-
-### Typed event stream — `AgentEvent`
-
-`chat()` returns a stream of strongly-typed events. The compiler forces you to handle every case.
+- **Doc comment on the impl block** → tool description
+- **`/// param: description`** lines in each method's doc comment → argument descriptions
+- Return type just needs to be `serde::Serialize` — the macro handles the JSON schema
 
 ```rust
-match event? {
-    AgentEvent::Token(text)    => /* assistant is typing    */,
-    AgentEvent::ToolCall(c)    => /* model called a tool    */,
-    AgentEvent::ToolResult(r)  => /* tool finished, here's r.result */,
-}
-```
-
-No `if result.is_null()` hacks. No optional fields you have to remember to check. Each variant carries exactly what it means.
-
-In streaming mode, `Token` arrives as SSE deltas. In non-streaming mode, it arrives as one chunk. Your match arm handles both.
-
----
-
-### Automatic agent loop
-
-The model requests a tool → `ds_api` executes it → feeds the result back → asks the model again. This continues until the model stops calling tools. You never write that loop.
-
-```
-User prompt
-   └─▶ API call
-         └─▶ ToolCall event (model wants data)
-               └─▶ your function runs
-                     └─▶ ToolResult event (result fed back)
-                           └─▶ API call (model continues)
-                                 └─▶ Token events (final answer)
-```
-
----
-
-### Context window management — automatic summarization
-
-Long conversations are compressed automatically. The default summarizer (`LlmSummarizer`) calls the model to write a concise semantic summary of older turns, replaces them with a single system message, and keeps the most recent turns verbatim. Your `with_system_prompt` messages are never touched.
-
-```rust
-// Default: trigger at ~60 000 estimated tokens, retain last 10 turns.
-let agent = DeepseekAgent::new(&token);
-
-// Custom thresholds:
-use ds_api::{LlmSummarizer, ApiClient};
-
-let agent = DeepseekAgent::new(&token)
-    .with_summarizer(
-        LlmSummarizer::new(ApiClient::new(&token))
-            .token_threshold(40_000)
-            .retain_last(6),
-    );
-```
-
-If you prefer zero extra API calls, use `SlidingWindowSummarizer` instead — it keeps the last N turns and silently drops everything older:
-
-```rust
-use ds_api::SlidingWindowSummarizer;
-
-let agent = DeepseekAgent::new(&token)
-    .with_summarizer(SlidingWindowSummarizer::new(20));
-```
-
-Your agent stays within context limits without you counting tokens.
-
----
-
-### Reusable agents — `into_agent()`
-
-`chat()` consumes the agent to keep the borrow checker happy inside the async state machine. Get it back when the stream ends:
-
-```rust
-let mut agent = DeepseekAgent::new(token)
-    .with_streaming()
-    .add_tool(Shell);
-
-loop {
-    let mut stream = agent.chat(&prompt);
-    while let Some(ev) = stream.next().await { /* ... */ }
-    agent = stream.into_agent().unwrap(); // ← agent back, history intact
-}
-```
-
-Full REPL with persistent conversation history. No cloning. No `Arc<Mutex<>>`.
-
----
-
-### OpenAI-compatible providers
-
-`DeepseekAgent::custom(token, base_url, model)` points the agent at any OpenAI-compatible endpoint. The default `LlmSummarizer` is automatically configured to use the same provider and model — no extra setup needed.
-
-```rust
-use ds_api::{AgentEvent, DeepseekAgent};
-use futures::StreamExt;
-
-#[tokio::main]
-async fn main() {
-    let token = std::env::var("OPENROUTER_API_KEY").unwrap();
-
-    let mut agent = DeepseekAgent::custom(
-            &token,
-            "https://openrouter.ai/api/v1",
-            "meta-llama/llama-3.3-70b-instruct:free",
-        )
-        .with_streaming();
-
-    let mut stream = agent.chat("What is Rust's ownership model?");
-    while let Some(event) = stream.next().await {
-        if let Ok(AgentEvent::Token(text)) = event {
-            print!("{text}");
-        }
-    }
-}
-```
-
----
-
-## Real Example — Shell Agent
-
-```rust
-use ds_api::{AgentEvent, DeepseekAgent, tool};
-use futures::StreamExt;
+use ds_api::tool;
 use serde_json::{Value, json};
-use tokio::process::Command;
 
-struct Shell;
+struct Calculator;
 
 #[tool]
-impl Tool for Shell {
-    /// Execute a shell command and return stdout/stderr.
-    /// command: the shell command to run
-    async fn run(&self, command: String) -> Value {
-        let out = Command::new("sh").arg("-c").arg(&command)
-            .output().await.unwrap();
-        json!({
-            "stdout": String::from_utf8_lossy(&out.stdout),
-            "stderr": String::from_utf8_lossy(&out.stderr),
-            "status": out.status.code(),
-        })
+impl ds_api::Tool for Calculator {
+    /// Add two numbers together.
+    /// a: first number
+    /// b: second number
+    async fn add(&self, a: f64, b: f64) -> Value {
+        json!({ "result": a + b })
     }
-}
 
-#[tokio::main]
-async fn main() {
-    let mut agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
-        .with_streaming()
-        .with_system_prompt("You may run shell commands to answer questions.")
-        .add_tool(Shell);
-
-    loop {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).unwrap();
-
-        let mut stream = agent.chat(line.trim());
-        while let Some(ev) = stream.next().await {
-            match ev {
-                Ok(AgentEvent::Token(t))   => print!("{t}"),
-                Ok(AgentEvent::ToolCall(c))   => println!("\n$ {}", c.args["command"].as_str().unwrap_or("")),
-                Ok(AgentEvent::ToolResult(r)) => println!("{}", r.result["stdout"].as_str().unwrap_or("")),
-                Err(e) => eprintln!("{e}"),
-            }
-        }
-        agent = stream.into_agent().unwrap();
+    /// Multiply two numbers.
+    /// a: first number
+    /// b: second number
+    async fn multiply(&self, a: f64, b: f64) -> Value {
+        json!({ "result": a * b })
     }
 }
 ```
 
-The model decides when to call the shell. You just receive the events.
+One struct can have multiple methods — they register as separate tools. Stack as many tools as you need with `.add_tool(...)`.
 
 ---
 
-## What You Never Write
+## Streaming
 
-| Without ds_api | With ds_api |
-|---|---|
-| JSON schema per tool | `#[tool]` |
-| Argument deserialization | automatic |
-| Tool call detection | automatic |
-| Agent loop | automatic |
-| Token counting / context trimming | automatic |
-| Streaming SSE wiring | automatic |
-
----
-
-## Installation
-
-```toml
-[dependencies]
-ds_api = "0.5"
-tokio  = { version = "1", features = ["full"] }
-futures = "0.3"
-```
-
-```
-export DEEPSEEK_API_KEY=your_key_here
-```
-
----
-
-## MCP — Model Context Protocol
-
-Enable the `mcp` feature to connect any MCP server's tools directly to `DeepseekAgent` — no glue code required.
-
-```toml
-[dependencies]
-ds-api = { version = "0.5", features = ["mcp"] }
-```
+Call `.with_streaming()` to get token-by-token output instead of waiting for the full response:
 
 ```rust
-use ds_api::{DeepseekAgent, McpTool};
+let mut stream = DeepseekAgent::new(token)
+    .with_streaming()
+    .add_tool(Search)
+    .chat("Search for something and summarise it");
 
-#[tokio::main]
-async fn main() {
-    let agent = DeepseekAgent::new(std::env::var("DEEPSEEK_API_KEY").unwrap())
-        // Local process over stdio — npx, uvx, or any binary
-        .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await.unwrap())
-        .add_tool(McpTool::stdio("uvx", &["mcp-server-git"]).await.unwrap())
-        // Remote server over Streamable HTTP
-        .add_tool(McpTool::http("https://mcp.example.com/").await.unwrap());
+while let Some(event) = stream.next().await {
+    match event.unwrap() {
+        AgentEvent::Token(t)      => { print!("{t}"); io::stdout().flush().ok(); }
+        AgentEvent::ToolCall(c)   => {
+            // In streaming mode, ToolCall fires once per SSE chunk.
+            // First chunk: c.delta is empty, c.name is set — good moment to show "calling X".
+            // Subsequent chunks: c.delta contains incremental argument JSON.
+            // In non-streaming mode, exactly one ToolCall fires with the full args in c.delta.
+            if c.delta.is_empty() { println!("\n[calling {}]", c.name); }
+        }
+        AgentEvent::ToolResult(r) => println!("[done] {}: {}", r.name, r.result),
+        _                         => {}
+    }
 }
 ```
 
-`McpTool` fetches the tool list from the server at construction time (pagination handled automatically) and forwards every model tool call to the MCP server at runtime. The server's `inputSchema` is passed to the model as-is — no manual schema configuration needed.
+### AgentEvent reference
 
-Without `features = ["mcp"]`, `rmcp` is never pulled in and the compiled output is identical to `0.5.5`.
+| Variant | When | Notes |
+|---------|------|-------|
+| `Token(String)` | Model is speaking | Streaming: one fragment per chunk. Non-streaming: whole reply at once. |
+| `ReasoningToken(String)` | Model is thinking | Only from reasoning models (e.g. `deepseek-reasoner`). |
+| `ToolCall(ToolCallChunk)` | Tool call in progress | `chunk.id`, `chunk.name`, `chunk.delta`. Streaming: multiple per call. Non-streaming: one per call. |
+| `ToolResult(ToolCallResult)` | Tool finished | `result.name`, `result.args`, `result.result`. |
+
+---
+
+## Using a different model or provider
+
+Any OpenAI-compatible endpoint works:
+
+```rust
+// OpenRouter
+let agent = DeepseekAgent::custom(
+    "sk-or-...",
+    "https://openrouter.ai/api/v1",
+    "meta-llama/llama-3.3-70b-instruct:free",
+);
+
+// deepseek-reasoner (think before responding)
+let agent = DeepseekAgent::new(token)
+    .with_model("deepseek-reasoner");
+```
 
 ---
 
-## Roadmap
+## Injecting messages mid-run
 
-- ~~OpenAI-compatible providers~~
-- Structured output support
-- `#[tool]` parameter types: custom `serde` structs (return types already support any `impl Serialize`)
-- More examples
+You can send a message into a running agent loop — useful when the user types something while the agent is still executing tools:
+
+```rust
+let (agent, tx) = DeepseekAgent::new(token)
+    .with_streaming()
+    .add_tool(SlowTool)
+    .with_interrupt_channel();
+
+// From any task, at any time:
+tx.send("Actually, cancel that and do X instead.".into()).unwrap();
+
+// The agent picks it up after the current tool-execution round finishes.
+let mut stream = agent.chat("Do the slow thing.");
+```
 
 ---
+
+## MCP tools
+
+MCP (Model Context Protocol) lets you use external processes as tools — Node scripts, Python services, anything that speaks MCP over stdio:
+
+```rust
+// Requires the `mcp` feature
+let agent = DeepseekAgent::new(token)
+    .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await?);
+```
+
+---
+
+## familiar
+
+This repo includes `familiar`, a full Discord + web chat app built on ds-api. It shows persistent conversation history, multi-tool agents, streaming UI, and MCP integration in a real app. See `familiar/` for details.
+
+---
+
+## Contributing
+
+PRs welcome. Keep changes focused; update public API docs when behaviour changes.
 
 ## License
 

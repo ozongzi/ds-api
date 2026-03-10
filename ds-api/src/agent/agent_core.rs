@@ -7,15 +7,17 @@ use crate::tool_trait::Tool;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-/// Information about a tool call requested by the model.
+/// A tool call fragment emitted by [`AgentStream`][crate::agent::AgentStream].
 ///
-/// Yielded as `AgentEvent::ToolCall` when the model requests a tool invocation.
-/// At this point the tool has not yet been executed.
+/// In streaming mode multiple `ToolCallChunk`s are emitted per tool call:
+/// the first has an empty `delta` (name is known, no args yet); subsequent
+/// chunks carry incremental argument JSON.  In non-streaming mode a single
+/// chunk is emitted with the complete argument JSON in `delta`.
 #[derive(Debug, Clone)]
-pub struct ToolCallInfo {
+pub struct ToolCallChunk {
     pub id: String,
     pub name: String,
-    pub args: Value,
+    pub delta: String,
 }
 
 /// The result of a completed tool invocation.
@@ -25,7 +27,7 @@ pub struct ToolCallInfo {
 pub struct ToolCallResult {
     pub id: String,
     pub name: String,
-    pub args: Value,
+    pub args: String,
     pub result: Value,
 }
 
@@ -36,15 +38,13 @@ pub struct ToolCallResult {
 /// - `Token(String)` — a text fragment from the assistant.  In streaming mode each
 ///   `Token` is a single SSE delta; in non-streaming mode the full response text
 ///   arrives as one `Token`.
-/// - `ToolCallStart { id, name }` — emitted the moment a tool call's name is known
-///   during streaming, before any arguments have arrived.  Allows UIs to show the
-///   tool name immediately.  Only emitted in streaming mode.
-/// - `ToolCallArgsDelta { id, delta }` — an incremental fragment of the tool call's
-///   JSON arguments, emitted once per SSE chunk during streaming.  Accumulate these
-///   to reconstruct the full arguments string.  Only emitted in streaming mode.
-/// - `ToolCall(ToolCallInfo)` — the model has requested a tool invocation, emitted
-///   once the full arguments are assembled (end of stream).  In non-streaming mode
-///   this is the only tool-call event.  Execution begins after this event.
+/// - `ToolCall(id, name, delta)` — a tool call fragment.  Behaves exactly like
+///   `Token`: in streaming mode one event is emitted per SSE chunk (first chunk has
+///   an empty `delta` and carries the tool name; subsequent chunks carry incremental
+///   argument JSON).  In non-streaming mode a single event is emitted with the
+///   complete arguments string.  Accumulate `delta` values by `id` to reconstruct
+///   the full argument JSON.  Execution begins after all chunks for a turn are
+///   delivered.
 /// - `ToolResult(ToolCallResult)` — a tool has finished executing.  One event is
 ///   emitted per call, in the same order as the corresponding `ToolCall` events.
 #[derive(Debug, Clone)]
@@ -53,17 +53,7 @@ pub enum AgentEvent {
     /// Emitted when the model produces reasoning/thinking content (e.g. deepseek-reasoner).
     /// In streaming mode this arrives token-by-token before the main reply.
     ReasoningToken(String),
-    /// Emitted in streaming mode the instant a tool call's id+name are known.
-    ToolCallStart {
-        id: String,
-        name: String,
-    },
-    /// Emitted in streaming mode for each incremental fragment of the arguments JSON.
-    ToolCallArgsDelta {
-        id: String,
-        delta: String,
-    },
-    ToolCall(ToolCallInfo),
+    ToolCall(ToolCallChunk),
     ToolResult(ToolCallResult),
 }
 

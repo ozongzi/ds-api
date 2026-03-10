@@ -2,6 +2,87 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-03-10
+
+### Summary
+
+Breaking release. `AgentEvent` has been simplified: three separate tool-call event variants are replaced by a single `ToolCall(ToolCallChunk)` that works uniformly in both streaming and non-streaming modes — the same pattern as `Token`. Also adds `deepseek-reasoner` support via a new `ReasoningToken` event, and fixes the interrupt channel for streaming agents.
+
+### Breaking changes
+
+**`AgentEvent` — tool call variants unified**
+
+`ToolCallStart`, `ToolCallArgsDelta`, and `ToolCall(ToolCallInfo)` are replaced by a single variant:
+
+```rust
+AgentEvent::ToolCall(ToolCallChunk { id, name, delta })
+```
+
+Behaviour mirrors `Token`:
+- **Streaming**: one event per SSE chunk. First chunk has `delta = ""` (name is now known — create your UI element). Subsequent chunks carry incremental argument JSON in `delta`.
+- **Non-streaming**: one event per tool call with the complete argument JSON in `delta`.
+
+Accumulate `delta` values by `id` to reconstruct the full argument string. `ToolResult` marks completion.
+
+**`ToolCallInfo` removed** — replaced by `ToolCallChunk`:
+
+```rust
+// before
+AgentEvent::ToolCall(info)       // info.id, info.name, info.args: Value
+AgentEvent::ToolCallStart { id, name }
+AgentEvent::ToolCallArgsDelta { id, delta }
+
+// after
+AgentEvent::ToolCall(c)          // c.id, c.name, c.delta: String
+```
+
+**`ToolCallResult.args` type changed: `Value` → `String`**
+
+The raw JSON string from the wire is now passed through directly. Parse it yourself if you need a structured object.
+
+### Migration
+
+Replace three match arms with one:
+
+```rust
+// before
+Ok(AgentEvent::ToolCallStart { id, name }) => { /* show tool name */ }
+Ok(AgentEvent::ToolCallArgsDelta { id, delta }) => { /* accumulate */ }
+Ok(AgentEvent::ToolCall(info)) => { /* info.name, info.args */ }
+
+// after
+Ok(AgentEvent::ToolCall(c)) => {
+    if c.delta.is_empty() {
+        // first chunk: c.name is known, args not yet streaming
+    } else {
+        // subsequent chunks: append c.delta to your buffer
+    }
+}
+// in non-streaming mode, c.delta holds the complete args on the single event
+```
+
+### New features
+
+**`AgentEvent::ReasoningToken(String)` — deepseek-reasoner support**
+
+A new event variant carrying incremental thinking/reasoning content from models that expose it (e.g. `deepseek-reasoner`). Arrives token-by-token before the main reply in streaming mode; arrives in full in non-streaming mode. Absent for models that do not produce reasoning content.
+
+```rust
+Ok(AgentEvent::ReasoningToken(t)) => print!("<think>{t}</think>"),
+```
+
+**`reasoning_content` round-trip for multi-turn deepseek-reasoner**
+
+`reasoning_content` is now preserved in history on assistant messages that contain tool calls (required by deepseek-reasoner to continue reasoning after seeing tool results), and stripped from plain reply messages at the start of the next turn (sending it there causes a 400 error). Previously, both multi-turn tool-calling and reasoning content caused API 400 errors.
+
+### Bug fixes
+
+**Interrupt channel now works during streaming**
+
+`ApiClient::send()` now routes through the interrupt-aware path when streaming is enabled, so injected messages are correctly queued mid-generation. Previously, interrupts sent while an SSE stream was open were silently dropped.
+
+---
+
 ## [0.5.6] - 2026-03-10
 
 ### Summary

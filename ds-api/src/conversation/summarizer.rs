@@ -1,7 +1,7 @@
 //! Conversation summarizer trait and built-in implementations.
 //!
 //! The [`AUTO_SUMMARY_TAG`][crate::raw::request::message::AUTO_SUMMARY_TAG] constant
-//! in [`Message`][crate::raw::request::message::Message] defines the single source of
+//! in [`Message`] defines the single source of
 //! truth for identifying auto-generated summary messages.
 //!
 //! # Trait

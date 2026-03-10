@@ -2,7 +2,7 @@
 //!
 //! This module is responsible *only* for scheduling and polling — it does not
 //! contain any business logic.  All "do actual work" functions live in
-//! [`executor`][super::executor]:
+//! `executor`:
 //!
 //! ```text
 //! AgentStream::poll_next
@@ -27,9 +27,9 @@ use futures::{Stream, StreamExt};
 use super::executor::{
     ChunkEvent, ConnectFuture, ExecFuture, FetchFuture, StreamingData, SummarizeFuture,
     apply_chunk_delta, connect_stream, execute_tools, fetch_response, finalize_stream,
-    raw_to_tool_call_info, run_summarize,
+    run_summarize,
 };
-use crate::agent::agent_core::{AgentEvent, DeepseekAgent, ToolCallResult};
+use crate::agent::agent_core::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult};
 use crate::error::ApiError;
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -54,8 +54,9 @@ use crate::error::ApiError;
 /// while let Some(event) = stream.next().await {
 ///     match event? {
 ///         AgentEvent::Token(text) => print!("{text}"),
-///         AgentEvent::ToolCall(info) => println!("\n[calling {}]", info.name),
+///         AgentEvent::ToolCall(c) => print!("{}", c.delta),
 ///         AgentEvent::ToolResult(res) => println!("[result: {}]", res.result),
+///         AgentEvent::ReasoningToken(text) => print!("{text}"),
 ///     }
 /// }
 /// # Ok(())
@@ -83,11 +84,13 @@ pub(crate) enum AgentStreamState {
     ConnectingStream(ConnectFuture),
     /// Polling an active SSE stream chunk-by-chunk.
     StreamingChunks(Box<StreamingData>),
-    /// Yielding individual `ToolCall` preview events before execution starts.
-    /// `raw` contains the wire-format calls needed to kick off [`ExecutingTools`].
+    /// Yielding individual `ToolCall` events before execution starts.
+    /// `from_streaming`: if true, events were already emitted as chunks during
+    /// [`StreamingChunks`] — skip emitting and go straight to [`ExecutingTools`].
     YieldingToolCalls {
-        pending: VecDeque<crate::agent::agent_core::ToolCallInfo>,
+        pending: VecDeque<crate::raw::request::message::ToolCall>,
         raw: Vec<crate::raw::request::message::ToolCall>,
+        from_streaming: bool,
     },
     /// Awaiting parallel/sequential tool execution.
     ExecutingTools(ExecFuture),
@@ -100,7 +103,7 @@ pub(crate) enum AgentStreamState {
 // ── Constructor / accessor ────────────────────────────────────────────────────
 
 impl AgentStream {
-    /// Wrap an agent and start in the [`Idle`][AgentStreamState::Idle] state.
+    /// Wrap an agent and start in the `Idle` state.
     pub fn new(agent: DeepseekAgent) -> Self {
         Self {
             agent: Some(agent),
@@ -164,11 +167,8 @@ impl Stream for AgentStream {
                             return Poll::Ready(Some(Ok(match ev {
                                 ChunkEvent::Token(t) => AgentEvent::Token(t),
                                 ChunkEvent::ReasoningToken(t) => AgentEvent::ReasoningToken(t),
-                                ChunkEvent::ToolCallStart { id, name } => {
-                                    AgentEvent::ToolCallStart { id, name }
-                                }
-                                ChunkEvent::ToolCallArgsDelta { id, delta } => {
-                                    AgentEvent::ToolCallArgsDelta { id, delta }
+                                ChunkEvent::ToolCallChunk { id, name, delta } => {
+                                    AgentEvent::ToolCall(ToolCallChunk { id, name, delta })
                                 }
                             })));
                         }
@@ -192,14 +192,11 @@ impl Stream for AgentStream {
                             return Poll::Ready(None);
                         }
 
-                        let pending = raw_tool_calls
-                            .iter()
-                            .map(raw_to_tool_call_info)
-                            .collect::<VecDeque<_>>();
                         this.agent = Some(data.agent);
                         this.state = AgentStreamState::YieldingToolCalls {
-                            pending,
+                            pending: VecDeque::new(),
                             raw: raw_tool_calls,
+                            from_streaming: true,
                         };
                         continue;
                     }
@@ -252,17 +249,17 @@ impl Stream for AgentStream {
                             continue;
                         }
 
+                        // Yield any text content before transitioning.
+                        let maybe_text = fetch.content.map(AgentEvent::Token);
                         let pending = fetch
                             .raw_tool_calls
                             .iter()
-                            .map(raw_to_tool_call_info)
+                            .cloned()
                             .collect::<VecDeque<_>>();
-
-                        // Yield any text content before transitioning.
-                        let maybe_text = fetch.content.map(AgentEvent::Token);
                         this.state = AgentStreamState::YieldingToolCalls {
                             pending,
                             raw: fetch.raw_tool_calls,
+                            from_streaming: false,
                         };
 
                         if let Some(event) = maybe_text {
@@ -291,11 +288,17 @@ impl Stream for AgentStream {
                     }
                 },
 
-                AgentStreamState::YieldingToolCalls { pending, raw } => {
-                    if let Some(info) = pending.pop_front() {
-                        return Poll::Ready(Some(Ok(AgentEvent::ToolCall(info))));
+                AgentStreamState::YieldingToolCalls { pending, raw, from_streaming } => {
+                    if !*from_streaming {
+                        if let Some(tc) = pending.pop_front() {
+                            return Poll::Ready(Some(Ok(AgentEvent::ToolCall(ToolCallChunk {
+                                id: tc.id.clone(),
+                                name: tc.function.name.clone(),
+                                delta: tc.function.arguments.clone(),
+                            }))));
+                        }
                     }
-                    // All previews yielded — begin execution.
+                    // All events yielded (or streaming — already emitted as chunks).
                     let agent = this
                         .agent
                         .take()
