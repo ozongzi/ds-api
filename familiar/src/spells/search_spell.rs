@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ds_api::tool;
 use serde_json::{Value, json};
 use tokio::process::Command;
@@ -22,7 +24,8 @@ impl Tool for SearchSpell {
     /// context_chars: 每行最多字符数，用于裁剪每行输出长度（保留匹配附近），默认 400，最多 2000
     /// max_matches: 最多返回几个匹配，默认 50，最多 200
     /// include_ignored: 是否包含 .gitignore 及隐藏文件，默认 false
-    async fn grep(
+    /// timeout: 超时时间，默认 20 秒
+    async fn ripgrep(
         &self,
         pattern: String,
         path: Option<String>,
@@ -33,6 +36,7 @@ impl Tool for SearchSpell {
         context_chars: Option<u32>,
         max_matches: Option<u32>,
         include_ignored: Option<bool>,
+        timeout: Option<u64>,
     ) -> Value {
         let search_path = path.unwrap_or_else(|| ".".to_string());
         let context = context_lines.unwrap_or(2).min(10);
@@ -41,6 +45,7 @@ impl Tool for SearchSpell {
         // Defaults to 400 and is capped at 2000.
         let context_chars_opt: Option<usize> =
             Some(context_chars.unwrap_or(400).min(2000) as usize);
+        let timeout = Duration::from_secs(timeout.unwrap_or(20));
 
         let mut cmd = Command::new("rg");
         if literal.unwrap_or(false) {
@@ -65,9 +70,14 @@ impl Tool for SearchSpell {
         cmd.arg(&pattern);
         cmd.arg(&search_path);
 
-        let output = match cmd.output().await {
+        let result = match tokio::time::timeout(timeout, cmd.output()).await {
+            Ok(output_res) => output_res,
+            Err(_) => return json!({ "error": "command timed out" }),
+        };
+
+        let output = match result {
             Ok(o) => o,
-            Err(e) => return json!({ "error": format!("rg 执行失败: {e}") }),
+            Err(e) => return json!({ "error": e.to_string() }),
         };
 
         // exit code 1 = no matches (not an error), 2 = real error
@@ -109,9 +119,8 @@ impl Tool for SearchSpell {
 
                     // Collect submatches for highlighting offsets
                     let submatches_arr: Vec<Value> = obj["data"]["submatches"]
-                        .as_array()
-                        .map(|v| v.clone())
-                        .unwrap_or_else(|| vec![]);
+                        .as_array().cloned()
+                        .unwrap_or_else(std::vec::Vec::new);
 
                     let mut submatches: Vec<Value> = Vec::new();
                     // Determine match span (byte offsets) to center truncation around the match
@@ -197,8 +206,8 @@ impl Tool for SearchSpell {
                         .to_string();
                     let mut text = text_orig.clone();
                     let mut truncated = false;
-                    if let Some(maxc) = context_chars_opt {
-                        if text.len() > maxc {
+                    if let Some(maxc) = context_chars_opt
+                        && text.len() > maxc {
                             // keep a prefix of the context line with an ellipsis marker
                             if maxc > 1 {
                                 text = format!("{}…", &text_orig[..maxc.saturating_sub(1)]);
@@ -207,7 +216,6 @@ impl Tool for SearchSpell {
                             }
                             truncated = true;
                         }
-                    }
                     current_lines.push(json!({
                         "line": line_number,
                         "text": text,

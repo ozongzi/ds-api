@@ -288,15 +288,17 @@ impl Stream for AgentStream {
                     }
                 },
 
-                AgentStreamState::YieldingToolCalls { pending, raw, from_streaming } => {
-                    if !*from_streaming {
-                        if let Some(tc) = pending.pop_front() {
-                            return Poll::Ready(Some(Ok(AgentEvent::ToolCall(ToolCallChunk {
-                                id: tc.id.clone(),
-                                name: tc.function.name.clone(),
-                                delta: tc.function.arguments.clone(),
-                            }))));
-                        }
+                AgentStreamState::YieldingToolCalls {
+                    pending,
+                    raw,
+                    from_streaming,
+                } => {
+                    if !*from_streaming && let Some(tc) = pending.pop_front() {
+                        return Poll::Ready(Some(Ok(AgentEvent::ToolCall(ToolCallChunk {
+                            id: tc.id.clone(),
+                            name: tc.function.name.clone(),
+                            delta: tc.function.arguments.clone(),
+                        }))));
                     }
                     // All events yielded (or streaming — already emitted as chunks).
                     let agent = this

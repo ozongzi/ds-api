@@ -76,7 +76,11 @@ pub(crate) enum ChunkEvent {
     /// A tool call chunk: `(id, name, delta)`.  First emission has empty `delta`
     /// and is the signal that a new tool call has started; subsequent emissions
     /// carry incremental argument JSON fragments.
-    ToolCallChunk { id: String, name: String, delta: String },
+    ToolCallChunk {
+        id: String,
+        name: String,
+        delta: String,
+    },
 }
 
 // ── Type aliases for futures returned by this module ─────────────────────────
@@ -231,12 +235,38 @@ pub(crate) async fn execute_tools(
     for tc in raw_tool_calls {
         let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
 
-        let result = match agent.tool_index.get(&tc.function.name) {
-            Some(&idx) => agent.tools[idx].call(&tc.function.name, args.clone()).await,
-            None => {
-                serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) })
+        // Prepare a result value and an abort flag.
+        let mut result = serde_json::json!({ "error": "unknown tool" });
+        let mut aborted = false;
+
+        if let Some(&idx) = agent.tool_index.get(&tc.function.name) {
+            // If we have an interrupt receiver, race the tool call against it.
+            if let Some(rx) = agent.interrupt_rx.as_mut() {
+                tokio::select! {
+                    res = agent.tools[idx].call(&tc.function.name, args.clone()) => {
+                        result = res;
+                    }
+                    maybe_msg = rx.recv() => {
+                        // An interrupt arrived while the tool was running.
+                        if let Some(msg) = maybe_msg {
+                            agent.conversation.history_mut().push(Message::user(&msg));
+                            // Drain any remaining queued interrupts to preserve order.
+                            while let Ok(more) = rx.try_recv() {
+                                agent.conversation.history_mut().push(Message::user(&more));
+                            }
+                        }
+                        // Mark the tool as aborted and stop executing further tools.
+                        result = serde_json::json!({ "error": "aborted by interrupt" });
+                        aborted = true;
+                    }
+                }
+            } else {
+                // No interrupt channel — await tool normally.
+                result = agent.tools[idx].call(&tc.function.name, args.clone()).await;
             }
-        };
+        } else {
+            result = serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) });
+        }
 
         agent.conversation.history_mut().push(Message {
             role: Role::Tool,
@@ -251,6 +281,10 @@ pub(crate) async fn execute_tools(
             args: tc.function.arguments,
             result,
         });
+
+        if aborted {
+            break;
+        }
     }
 
     // Drain any user messages that arrived while tools were executing and

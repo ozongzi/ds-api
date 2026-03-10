@@ -7,7 +7,7 @@ use serde::Deserialize;
 ///   1. `config.toml`  — all settings including secrets, git-ignored
 ///   2. Environment variables prefixed with `FAMILIAR__`
 ///      e.g. `FAMILIAR__SECRETS__DEEPSEEK_API_KEY=sk-...`
-///           `FAMILIAR__SERVER__PORT=8080`
+///      `FAMILIAR__SERVER__PORT=8080`
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub secrets: Secrets,

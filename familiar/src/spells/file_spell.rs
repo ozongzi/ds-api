@@ -23,13 +23,11 @@ impl Tool for FileSpell {
     /// path: 文件路径
     /// content: 写入的完整内容
     async fn write(&self, path: String, content: String) -> Value {
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            if !parent.as_os_str().is_empty() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = std::path::Path::new(&path).parent()
+            && !parent.as_os_str().is_empty()
+                && let Err(e) = std::fs::create_dir_all(parent) {
                     return json!({ "error": format!("创建目录失败: {e}") });
                 }
-            }
-        }
         match std::fs::write(&path, &content) {
             Ok(_) => {
                 let line_count = content.lines().count();

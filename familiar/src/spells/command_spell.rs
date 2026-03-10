@@ -1,9 +1,9 @@
 use ds_api::tool;
 use serde_json::json;
 use tokio::process::Command;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
-use super::{MAX_OUTPUT_CHARS, truncate_output};
+use crate::spells::execute_command;
 
 pub struct CommandSpell;
 
@@ -32,31 +32,8 @@ impl Tool for CommandSpell {
             }
         }
 
-        let timeout_secs = timeout_secs.unwrap_or(20);
+        let timeout_time = Duration::from_secs(timeout_secs.unwrap_or(20));
 
-        let result = match timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
-            Ok(output_res) => output_res,
-            Err(_) => return json!({ "error": "command timed out" }),
-        };
-
-        let output = match result {
-            Ok(o) => o,
-            Err(e) => return json!({ "error": e.to_string() }),
-        };
-
-        let stdout = truncate_output(
-            String::from_utf8_lossy(&output.stdout).trim(),
-            MAX_OUTPUT_CHARS,
-        );
-        let stderr = truncate_output(
-            String::from_utf8_lossy(&output.stderr).trim(),
-            MAX_OUTPUT_CHARS,
-        );
-
-        json!({
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": output.status.code(),
-        })
+        execute_command(cmd, timeout_time).await
     }
 }

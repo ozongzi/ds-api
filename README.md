@@ -158,20 +158,45 @@ let agent = DeepseekAgent::new(token)
 
 ## Injecting messages mid-run
 
-You can send a message into a running agent loop — useful when the user types something while the agent is still executing tools:
+You can send a message into a running agent loop — useful when the user types something while the agent is still executing tools.
+
+The interrupt channel is attached with `.with_interrupt_channel()` and returns the agent plus a sender you can use from any task. The sender type (`InterruptSender`) is a re-export of `tokio::sync::mpsc::UnboundedSender<String>`, so it is cheap to clone and use concurrently:
 
 ```rust
 let (agent, tx) = DeepseekAgent::new(token)
     .with_streaming()
     .add_tool(SlowTool)
     .with_interrupt_channel();
+```
 
-// From any task, at any time:
+Behavior and semantics
+- Sending an interrupt: call `tx.send("...".into()).unwrap()` from any task or callback. The message will be delivered into the agent's conversation history.
+- During tool execution: the agent now actively listens for interrupts while a tool is running. If an interrupt message arrives while a tool is executing, the executor will:
+  1. Immediately append the interrupt text to the conversation history as a `Role::User` message (and drain any queued interrupt messages in order).
+  2. Abort the currently running tool (the tool future is cancelled) and stop executing further tools for the current round. (can close only when the tool is awaiting)
+  3. Record a placeholder result for the aborted tool (the runtime exposes this as an error-shaped JSON result), and then proceed to the next API turn so the model sees the injected user message.
+- Between turns / idle transition: any queued interrupts are drained before the next API call so injected messages are always visible to the model on the next turn.
+
+Example: cancel a running tool and pivot
+```rust
+// Start the agent and get an interrupt sender.
+let (agent, tx) = DeepseekAgent::new(token)
+    .with_streaming()
+    .add_tool(SlowTool)
+    .with_interrupt_channel();
+
+// In another task (e.g. user action), send an interrupt to change the plan.
 tx.send("Actually, cancel that and do X instead.".into()).unwrap();
 
-// The agent picks it up after the current tool-execution round finishes.
+// If the agent is currently executing a tool, that tool will be aborted and the
+// interrupt will be pushed into history so the next API turn sees it.
 let mut stream = agent.chat("Do the slow thing.");
 ```
+
+Notes
+- `InterruptSender` is non-blocking and can be cloned; use it from any async context without awaiting.
+- Aborting a tool is implemented by cancelling the tool future (via the runtime). This is effective for most async tools, but if a tool holds on to external, non-cancellable resources you may want to implement cooperative cancellation inside the tool (for example, by checking a cancellation token).
+- The agent ensures interrupt message ordering by draining remaining queued interrupt messages when an interrupt is observed.
 
 ---
 

@@ -423,9 +423,9 @@ impl AppState {
                     | ds_api::raw::request::message::Role::Assistant
             );
 
-            if should_embed {
-                if let Some(text) = &msg.content {
-                    if !text.is_empty() {
+            if should_embed
+                && let Some(text) = &msg.content
+                    && !text.is_empty() {
                         match embed.embed(text).await {
                             Ok(vec) => {
                                 let vector = to_vector(vec);
@@ -436,8 +436,6 @@ impl AppState {
                             Err(e) => error!("embed failed: {e}"),
                         }
                     }
-                }
-            }
         });
     }
 }
@@ -661,11 +659,10 @@ async fn run_generation(
             entry.emit(json!({"type": "done"}).to_string());
             entry.generating = false;
             // Only restore the agent if the MCP tool list hasn't changed.
-            if !agent_stale.load(Ordering::Relaxed) {
-                if let Some(agent) = recovered {
+            if !agent_stale.load(Ordering::Relaxed)
+                && let Some(agent) = recovered {
                     entry.agent = Some(agent);
                 }
-            }
             // Drain any queued interrupts that arrived during the final turn.
             entry.queued_interrupts.drain(..).next()
         } else {

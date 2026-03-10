@@ -344,15 +344,14 @@ async fn relay_live(
                     }
                     Some("answer") => {
                         // Deliver the user's reply to a waiting ask_user spell.
-                        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
-                            if !content.trim().is_empty() {
+                        if let Some(content) = v.get("content").and_then(|c| c.as_str())
+                            && !content.trim().is_empty() {
                                 state.deliver_answer(conversation_id, content.to_string()).await;
                             }
-                        }
                     }
                     Some("interrupt") => {
-                        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
-                            if !content.trim().is_empty() {
+                        if let Some(content) = v.get("content").and_then(|c| c.as_str())
+                            && !content.trim().is_empty() {
                                 tracing::info!(
                                     conversation = %conversation_id,
                                     "client interrupt: {content}"
@@ -373,7 +372,6 @@ async fn relay_live(
                                         .into(),
                                     ))
                                     .await;
-                            }
                         }
                     }
                     _ => {}

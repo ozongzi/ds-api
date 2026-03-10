@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import * as Diff from "diff";
+import hljs from "highlight.js";
+import DOMPurify from "dompurify";
 import styles from "./DiffView.module.css";
 
 interface Props {
@@ -72,6 +74,37 @@ function writeLines(newStr: string): DiffLine[] {
   }));
 }
 
+// Highlight a single line of code for the given file path.
+// Returns sanitized HTML safe to inject into the DOM.
+function highlightLineForPath(line: string, path: string): string {
+  if (!line) return ""; // keep empty lines empty
+
+  // Derive a language hint from the file extension if possible.
+  const ext = path.includes(".") ? (path.split(".").pop() ?? "") : "";
+  const language = ext && hljs.getLanguage(ext) ? ext : "";
+
+  // Use explicit language if available, otherwise auto-detect.
+  let rawHighlighted: string;
+  try {
+    rawHighlighted = language
+      ? hljs.highlight(line, { language }).value
+      : hljs.highlightAuto(line).value;
+  } catch {
+    rawHighlighted = line
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // Sanitize the highlighted HTML to avoid XSS.
+  const sanitized = DOMPurify.sanitize(rawHighlighted, {
+    ALLOWED_TAGS: ["span", "div", "em", "strong", "code"],
+    ALLOWED_ATTR: ["class"],
+  });
+
+  return sanitized;
+}
+
 export function DiffView({
   path,
   oldStr,
@@ -93,7 +126,8 @@ export function DiffView({
   const CONTEXT = 3;
   const visible = useMemo(() => {
     if (mode === "write") return lines; // all lines are added, show all
-    if (streaming) return lines.map((line, idx) => ({ kind: "line" as const, line, idx })); // 流式期间不折叠，避免 new_str 未完整时 unchanged 行被隐藏
+    if (streaming)
+      return lines.map((line, idx) => ({ kind: "line" as const, line, idx })); // 流式期间不折叠，避免 new_str 未完整时 unchanged 行被隐藏
     const changed = new Set<number>();
     lines.forEach((l, i) => {
       if (l.type !== "unchanged") changed.add(i);
@@ -120,13 +154,13 @@ export function DiffView({
         i++;
       } else {
         // Count consecutive hidden lines.
-        let start = i;
+        const start = i;
         while (i < lines.length && !show.has(i)) i++;
         rows.push({ kind: "collapse", count: i - start });
       }
     }
     return rows;
-  }, [lines, mode]);
+  }, [lines, mode, streaming]);
 
   const filename = path.split("/").pop() ?? path;
 
@@ -195,7 +229,12 @@ export function DiffView({
                           ? "−"
                           : " "}
                     </span>
-                    <code className={styles.code}>{line.content}</code>
+                    <code
+                      className={`${styles.code} hljs`}
+                      dangerouslySetInnerHTML={{
+                        __html: highlightLineForPath(line.content, path),
+                      }}
+                    />
                   </td>
                 </tr>
               );
