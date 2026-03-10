@@ -28,6 +28,7 @@ export function ChatPage() {
     send,
     interrupt,
     abort,
+    reattach,
     setHistory,
     clearBubbles,
   } = useChat(activeId, token);
@@ -56,16 +57,22 @@ export function ChatPage() {
         if (!cancelled) {
           setHistory(msgs);
           setHistoryLoading(false);
+          // Only open the reattach WS after history is loaded so replay
+          // events never race with setHistory overwriting bubbles.
+          reattach(activeId, token);
         }
       })
       .catch(() => {
-        if (!cancelled) setHistoryLoading(false);
+        if (!cancelled) {
+          setHistoryLoading(false);
+          reattach(activeId, token);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [activeId, token, clearBubbles, setHistory]);
+  }, [activeId, token, clearBubbles, setHistory, reattach]);
 
   // ── Auto-select first conversation after load ────────────────────────────
   useEffect(() => {
