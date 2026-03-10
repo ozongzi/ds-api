@@ -96,10 +96,10 @@ async fn fetch_agent_card_from_origin(url: &str, origin: &str) -> Result<(Value,
     ))
 }
 
-pub struct A2aTool;
+pub struct A2aSpell;
 
 #[tool]
-impl Tool for A2aTool {
+impl Tool for A2aSpell {
     /// 从 AgentRolodex 目录搜索 A2A agent 列表。
     /// 返回每个 agent 的名称、描述、URL、skills 和 tags。
     /// 可选参数：

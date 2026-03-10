@@ -1,10 +1,10 @@
 use ds_api::tool;
 use serde_json::json;
 
-pub struct PresentFileTool;
+pub struct PresentFileSpell;
 
 #[tool]
-impl Tool for PresentFileTool {
+impl Tool for PresentFileSpell {
     /// 将服务器上的文件提供给用户下载。
     /// 适合展示代码、日志、生成的图片等任何文件。
     /// path: 要下载的文件的绝对路径或相对路径

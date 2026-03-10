@@ -5,10 +5,10 @@ use uuid::Uuid;
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
 
-pub struct ScriptTool;
+pub struct ScriptSpell;
 
 #[tool]
-impl Tool for ScriptTool {
+impl Tool for ScriptSpell {
     /// 运行 TypeScript 脚本（使用 Bun 作为运行时）。
     /// 可直接在脚本顶部用 import 引入 npm 包，Bun 会自动安装，无需额外声明依赖。
     /// 示例：import { format } from "date-fns";

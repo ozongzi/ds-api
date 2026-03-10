@@ -4,10 +4,10 @@ use tokio::process::Command;
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
 
-pub struct CommandTool;
+pub struct CommandSpell;
 
 #[tool]
-impl Tool for CommandTool {
+impl Tool for CommandSpell {
     /// 跨平台执行终端命令
     /// command: 需要执行的终端命令
     /// cwd: 工作目录（可选），不传则使用服务器默认目录

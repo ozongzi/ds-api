@@ -51,8 +51,8 @@ export interface Message {
   role: "user" | "assistant" | "system" | "tool";
   name: string | null;
   content: string | null;
-  tool_calls: string | null;
-  tool_call_id: string | null;
+  spell_casts: string | null;
+  spell_cast_id: string | null;
   is_summary: boolean;
   created_at: number;
 }

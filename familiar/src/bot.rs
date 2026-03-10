@@ -160,7 +160,7 @@ async fn handle_turn(
         std::collections::HashMap::new();
 
     // Files to upload after the stream finishes.
-    // Each entry: (tool_call_id, filename, bytes)
+    // Each entry: (spell_cast_id, filename, bytes)
     let mut pending_uploads: Vec<(String, String, Vec<u8>)> = Vec::new();
 
     // Whether the placeholder has been committed (flushed with real content).

@@ -1,20 +1,20 @@
-mod a2a_tool;
-mod command_tool;
-mod file_tool;
-mod history_tool;
-mod outline_tool;
-mod present_file;
-mod script_tool;
-mod search_tool;
+mod a2a_spell;
+mod command_spell;
+mod file_spell;
+mod history_spell;
+mod outline_spell;
+mod present_file_spell;
+mod script_spell;
+mod search_spell;
 
-pub use a2a_tool::A2aTool;
-pub use command_tool::CommandTool;
-pub use file_tool::FileTool;
-pub use history_tool::HistoryTool;
-pub use outline_tool::OutlineTool;
-pub use present_file::PresentFileTool;
-pub use script_tool::ScriptTool;
-pub use search_tool::SearchTool;
+pub use a2a_tool::A2aSpell;
+pub use command_tool::CommandSpell;
+pub use file_tool::FileSpell;
+pub use history_tool::HistorySpell;
+pub use outline_tool::OutlineSpell;
+pub use present_file::PresentFileSpell;
+pub use script_tool::ScriptSpell;
+pub use search_tool::SearchSpell;
 
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
 

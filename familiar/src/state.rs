@@ -14,9 +14,9 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
-use crate::tools::{
-    A2aTool, CommandTool, FileTool, HistoryTool, OutlineTool, PresentFileTool, ScriptTool,
-    SearchTool,
+use crate::spells::{
+    A2aSpell, CommandSpell, FileSpell, HistorySpell, OutlineSpell, PresentFileSpell, ScriptSpell,
+    SearchSpell,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -186,14 +186,14 @@ impl AppState {
         )
         .with_streaming()
         .with_history(history)
-        .add_tool(CommandTool)
-        .add_tool(FileTool)
-        .add_tool(ScriptTool)
-        .add_tool(PresentFileTool)
-        .add_tool(A2aTool)
-        .add_tool(SearchTool)
-        .add_tool(OutlineTool)
-        .add_tool(HistoryTool {
+        .add_tool(CommandSpell)
+        .add_tool(FileSpell)
+        .add_tool(ScriptSpell)
+        .add_tool(PresentFileSpell)
+        .add_tool(A2aSpell)
+        .add_tool(SearchSpell)
+        .add_tool(OutlineSpell)
+        .add_tool(HistorySpell {
             db: self.db.clone(),
             embed: self.embed.clone(),
             conversation_id,

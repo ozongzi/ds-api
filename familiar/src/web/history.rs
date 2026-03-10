@@ -15,8 +15,8 @@ pub struct MessageResponse {
     pub role: String,
     pub name: Option<String>,
     pub content: Option<String>,
-    pub tool_calls: Option<String>,
-    pub tool_call_id: Option<String>,
+    pub spell_casts: Option<String>,
+    pub spell_cast_id: Option<String>,
     pub is_summary: bool,
     pub created_at: i64,
 }
@@ -49,8 +49,8 @@ pub async fn list_messages(
                 role: r.role,
                 name: r.name,
                 content: r.content,
-                tool_calls: r.tool_calls,
-                tool_call_id: r.tool_call_id,
+                spell_casts: r.spell_casts,
+                spell_cast_id: r.spell_cast_id,
                 is_summary: r.is_summary,
                 created_at: r.created_at,
             })

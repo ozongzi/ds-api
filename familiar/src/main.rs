@@ -3,7 +3,7 @@ mod db;
 mod embedding;
 mod errors;
 mod state;
-mod tools;
+mod spells;
 mod web;
 
 use std::sync::Arc;
