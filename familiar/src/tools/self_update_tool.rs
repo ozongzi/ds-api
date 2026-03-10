@@ -40,9 +40,8 @@ impl Tool for SelfUpdateTool {
         let script = "\
 #!/bin/sh
 sleep 3
-systemctl stop familiar
 cp /root/target/release/familiar /usr/local/bin/familiar
-systemctl start familiar
+systemctl stop familiar
 ";
         let script_path = "/tmp/familiar_deploy.sh";
         if let Err(e) = tokio::fs::write(script_path, script).await {
