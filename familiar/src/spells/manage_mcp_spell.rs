@@ -1,12 +1,10 @@
+use crate::config::Config;
 use ds_api::McpTool;
 use ds_api::tool;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
-use toml_edit::{Array, DocumentMut, Item, Table};
-
-const CONFIG_PATH: &str = "config.toml";
 
 pub struct ManageMcpSpell {
     /// All currently running MCP tools, shared with AppState.
@@ -36,9 +34,7 @@ impl Tool for ManageMcpSpell {
         let tools = self.mcp_tools.lock().await;
         let entries: Vec<Value> = tools
             .iter()
-            .map(|(name, tool)| {
-                json!({ "name": name, "tool_count": tool.raw_tools().len() })
-            })
+            .map(|(name, tool)| json!({ "name": name, "tool_count": tool.raw_tools().len() }))
             .collect();
         json!({ "installed": entries })
     }
@@ -89,21 +85,16 @@ impl Tool for ManageMcpSpell {
         // Mark agent stale — next generation rebuilds with updated MCP list
         self.agent_stale.store(true, Ordering::Relaxed);
 
-        // Persist to config.toml
-        if let Err(e) = persist_install(&name, &command, &args).await {
-            return json!({
-                "status": "partial",
-                "message": format!("MCP '{}' 已启动（{} 个工具）但写入 config.toml 失败: {}", name, new_tool_count, e)
-            });
-        }
+        // NOTE: persistence to config.toml has been removed. MCPs installed this way
+        // are active for the current process lifetime only.
 
         json!({
             "status": "ok",
-            "message": format!("MCP '{}' 已安装（{} 个工具）并持久化，下次对话时生效。", name, new_tool_count)
+            "message": format!("MCP '{}' 已安装（{} 个工具）。此安装为即时生效，进程重启后不会自动恢复。", name, new_tool_count)
         })
     }
 
-    /// 停止并卸载 MCP 服务器，同时从 config.toml 中移除
+    /// 停止并卸载 MCP 服务器
     /// name: 要卸载的服务器标识符
     async fn uninstall_mcp(&self, name: String) -> Value {
         let removed = {
@@ -122,102 +113,29 @@ impl Tool for ManageMcpSpell {
 
         self.agent_stale.store(true, Ordering::Relaxed);
 
-        if let Err(e) = persist_uninstall(&name).await {
-            return json!({
-                "status": "partial",
-                "message": format!("MCP '{}' 已停止但从 config.toml 移除失败: {}", name, e)
-            });
-        }
+        // NOTE: persistence to config.toml has been removed. Uninstall only affects
+        // the running process; no on-disk config is modified.
 
         json!({ "status": "ok", "message": format!("MCP '{}' 已卸载。", name) })
     }
 }
 
-// ── Config persistence ────────────────────────────────────────────────────────
-
-async fn persist_install(name: &str, command: &str, args: &[String]) -> anyhow::Result<()> {
-    let content = tokio::fs::read_to_string(CONFIG_PATH).await?;
-    let mut doc: DocumentMut = content.parse()?;
-
-    let mut tbl = Table::new();
-    tbl.insert("name", toml_edit::value(name));
-    tbl.insert("command", toml_edit::value(command));
-    if !args.is_empty() {
-        let mut arr = Array::new();
-        for a in args {
-            arr.push(a.as_str());
-        }
-        tbl.insert("args", Item::Value(arr.into()));
-    }
-
-    match doc.get_mut("mcp") {
-        Some(Item::ArrayOfTables(aot)) => {
-            aot.push(tbl);
-        }
-        _ => {
-            let mut aot = toml_edit::ArrayOfTables::new();
-            aot.push(tbl);
-            doc.insert("mcp", Item::ArrayOfTables(aot));
-        }
-    }
-
-    tokio::fs::write(CONFIG_PATH, doc.to_string()).await?;
-    Ok(())
-}
-
-async fn persist_uninstall(name: &str) -> anyhow::Result<()> {
-    let content = tokio::fs::read_to_string(CONFIG_PATH).await?;
-    let mut doc: DocumentMut = content.parse()?;
-
-    if let Some(Item::ArrayOfTables(aot)) = doc.get_mut("mcp") {
-        let to_remove: Vec<usize> = aot
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.get("name").and_then(|v| v.as_str()) == Some(name))
-            .map(|(i, _)| i)
-            .collect();
-        for i in to_remove.into_iter().rev() {
-            aot.remove(i);
-        }
-    }
-
-    tokio::fs::write(CONFIG_PATH, doc.to_string()).await?;
-    Ok(())
-}
+// ── Config reading (catalog) ──────────────────────────────────────────────────
 
 async fn read_catalog() -> anyhow::Result<Vec<Value>> {
-    let content = tokio::fs::read_to_string(CONFIG_PATH).await?;
-    let doc: DocumentMut = content.parse()?;
+    // Load configuration using the central Config loader so we respect env overrides.
+    let cfg = Config::load();
 
-    let Some(Item::ArrayOfTables(aot)) = doc.get("mcp_catalog") else {
-        return Ok(vec![]);
-    };
-
-    let entries = aot
-        .iter()
-        .map(|t| {
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let description = t
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let command = t
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let args: Vec<String> = t
-                .get("args")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            json!({ "name": name, "description": description, "command": command, "args": args })
+    let entries: Vec<Value> = cfg
+        .mcp_catalog
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "name": entry.name,
+                "description": entry.description,
+                "command": entry.command,
+                "args": entry.args
+            })
         })
         .collect();
 
