@@ -12,7 +12,7 @@ use serde::Deserialize;
 pub struct Config {
     pub secrets: Secrets,
     pub model: ModelConfig,
-    pub embedding: EmbeddingConfig,
+    pub embedding: ModelConfig,
     pub server: ServerConfig,
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
@@ -27,23 +27,15 @@ pub struct Config {
 /// Sensitive credentials.
 #[derive(Debug, Deserialize)]
 pub struct Secrets {
-    pub deepseek_api_key: String,
-    pub openrouter_api_key: String,
     pub database_url: String,
 }
 
-/// LLM model configuration.
+/// LLM or embedding model configuration.
 #[derive(Debug, Deserialize)]
 pub struct ModelConfig {
+    pub api_key: String,
     pub api_base: String,
     pub name: String,
-}
-
-/// Embedding model configuration.
-#[derive(Debug, Deserialize)]
-pub struct EmbeddingConfig {
-    pub api_base: String,
-    pub model: String,
 }
 
 /// HTTP server configuration.

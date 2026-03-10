@@ -164,16 +164,16 @@ impl AppState {
         let db = Db::new(pool.clone());
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
-            deepseek_token: cfg.secrets.deepseek_api_key.clone(),
+            deepseek_token: cfg.model.api_key.clone(),
             model_api_base: cfg.model.api_base.clone(),
             model_name: cfg.model.name.clone(),
             system_prompt: cfg.system_prompt(),
             pool,
             db,
             embed: EmbeddingClient::new(
-                cfg.secrets.openrouter_api_key.clone(),
+                cfg.embedding.api_key.clone(),
                 cfg.embedding.api_base.clone(),
-                cfg.embedding.model.clone(),
+                cfg.embedding.name.clone(),
             ),
             mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
             builtin_tool_count,
@@ -425,17 +425,18 @@ impl AppState {
 
             if should_embed
                 && let Some(text) = &msg.content
-                    && !text.is_empty() {
-                        match embed.embed(text).await {
-                            Ok(vec) => {
-                                let vector = to_vector(vec);
-                                if let Err(e) = db.set_embedding(row_id, vector).await {
-                                    error!("set_embedding failed: {e}");
-                                }
-                            }
-                            Err(e) => error!("embed failed: {e}"),
+                && !text.is_empty()
+            {
+                match embed.embed(text).await {
+                    Ok(vec) => {
+                        let vector = to_vector(vec);
+                        if let Err(e) = db.set_embedding(row_id, vector).await {
+                            error!("set_embedding failed: {e}");
                         }
                     }
+                    Err(e) => error!("embed failed: {e}"),
+                }
+            }
         });
     }
 }
@@ -458,8 +459,14 @@ async fn generation_loop(
     let mut agent_stale = initial_stale;
 
     loop {
-        let pending_text =
-            run_generation(state.clone(), conversation_id, agent, abort_flag, agent_stale).await;
+        let pending_text = run_generation(
+            state.clone(),
+            conversation_id,
+            agent,
+            abort_flag,
+            agent_stale,
+        )
+        .await;
 
         let text = match pending_text {
             None => break,
@@ -660,9 +667,10 @@ async fn run_generation(
             entry.generating = false;
             // Only restore the agent if the MCP tool list hasn't changed.
             if !agent_stale.load(Ordering::Relaxed)
-                && let Some(agent) = recovered {
-                    entry.agent = Some(agent);
-                }
+                && let Some(agent) = recovered
+            {
+                entry.agent = Some(agent);
+            }
             // Drain any queued interrupts that arrived during the final turn.
             entry.queued_interrupts.drain(..).next()
         } else {

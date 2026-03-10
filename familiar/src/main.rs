@@ -68,9 +68,9 @@ async fn main() {
             Arc::new(tokio::sync::Mutex::new(vec![]));
         let dummy_db = db::Db::new(pool.clone());
         let dummy_embed = embedding::EmbeddingClient::new(
-            cfg.secrets.openrouter_api_key.clone(),
+            cfg.embedding.api_key.clone(),
             cfg.embedding.api_base.clone(),
-            cfg.embedding.model.clone(),
+            cfg.embedding.name.clone(),
         );
         let dummy_conv = uuid::Uuid::nil();
 
