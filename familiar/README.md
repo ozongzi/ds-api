@@ -198,9 +198,9 @@ Requires=postgresql.service
 [Service]
 Type=simple
 WorkingDirectory=/srv/familiar
-EnvironmentFile=/etc/familiar/.env
 Environment=RUST_LOG=info
 ExecStart=/usr/local/bin/familiar
+# Notes: configuration is read from /etc/familiar/config.toml by the service
 Restart=on-failure
 RestartSec=5
 
