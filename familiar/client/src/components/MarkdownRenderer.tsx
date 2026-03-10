@@ -16,7 +16,7 @@ function buildRenderer(): Partial<Renderer> {
       const language = lang && hljs.getLanguage(lang) ? lang : "";
       const highlighted = language
         ? hljs.highlight(text, { language }).value
-        : hljs.highlightAuto(text).value;
+        : text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
       const langLabel = language
         ? `<span class="code-lang">${language}</span>`

@@ -3,10 +3,10 @@ use serde_json::json;
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
 
-pub struct FileTool;
+pub struct FileSpell;
 
 #[tool]
-impl Tool for FileTool {
+impl Tool for FileSpell {
     /// 删除文件
     /// path: 文件路径
     async fn delete(&self, path: String) -> Value {

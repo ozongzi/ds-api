@@ -4,10 +4,10 @@ use tokio::process::Command;
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
 
-pub struct SearchTool;
+pub struct SearchSpell;
 
 #[tool]
-impl Tool for SearchTool {
+impl Tool for SearchSpell {
     /// 用 ripgrep 在目录或文件中搜索匹配正则的内容。
     /// 返回每个匹配的文件路径、行号、行内容，以及前后各 context_lines 行上下文。
     /// 支持可选的每行字符裁剪（context_chars），用于限制每行输出的最大字符数并保留匹配附近的内容。

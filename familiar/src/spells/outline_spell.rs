@@ -2,7 +2,7 @@ use ds_api::tool;
 use serde_json::{Value, json};
 use tree_sitter::{Language, Node, Parser};
 
-pub struct OutlineTool;
+pub struct OutlineSpell;
 
 // ── Language detection ────────────────────────────────────────────────────────
 
@@ -265,7 +265,7 @@ fn extract_toml(root: Node, src: &[u8]) -> Vec<Symbol> {
 // ── Tool implementation ───────────────────────────────────────────────────────
 
 #[tool]
-impl Tool for OutlineTool {
+impl Tool for OutlineSpell {
     /// 提取源文件的符号大纲（函数、类、结构体、接口等），返回每个符号的名称、类型和行号范围。
     /// 适合在读取大文件前快速了解结构，或定位某个符号所在的行范围后再用 get 精确读取。
     ///

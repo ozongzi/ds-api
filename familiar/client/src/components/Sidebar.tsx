@@ -75,7 +75,7 @@ export function Sidebar({
       <div className={styles.header}>
         <span className={styles.logo}>
           <img src="/favicon.svg" width={22} height={22} alt="" />
-          Familiar
+          使魔
         </span>
         <button
           className={styles.newBtn}

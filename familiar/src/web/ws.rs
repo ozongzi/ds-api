@@ -344,6 +344,14 @@ async fn relay_live(
                         state.abort_generation(conversation_id);
                         // Don't close — wait for the "aborted" event from the task.
                     }
+                    Some("answer") => {
+                        // Deliver the user's reply to a waiting ask_user spell.
+                        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+                            if !content.trim().is_empty() {
+                                state.deliver_answer(conversation_id, content.to_string()).await;
+                            }
+                        }
+                    }
                     Some("interrupt") => {
                         if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
                             if !content.trim().is_empty() {

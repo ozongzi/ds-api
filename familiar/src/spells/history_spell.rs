@@ -5,14 +5,14 @@ use uuid::Uuid;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 
-pub struct HistoryTool {
+pub struct HistorySpell {
     pub db: Db,
     pub embed: EmbeddingClient,
     pub conversation_id: Uuid,
 }
 
 #[tool]
-impl Tool for HistoryTool {
+impl Tool for HistorySpell {
     /// 用关键词全文搜索历史消息（PostgreSQL FTS，精确匹配）。
     /// 适合查找具体命令、文件名、错误信息等。
     /// query: 搜索关键词，例如 "rust error" 或 "deploy nginx"

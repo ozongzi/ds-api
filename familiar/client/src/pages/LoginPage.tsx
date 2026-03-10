@@ -49,7 +49,7 @@ export function LoginPage() {
         {/* ── Logo ─────────────────────────────────────── */}
         <div className={styles.logoRow}>
           <img src="/favicon.svg" width={40} height={40} alt="" />
-          <h1 className={styles.title}>Familiar</h1>
+          <h1 className={styles.title}>使魔</h1>
         </div>
         <p className={styles.subtitle}>
           {mode === "login" ? "欢迎回来" : "创建账号"}

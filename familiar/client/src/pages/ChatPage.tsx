@@ -28,6 +28,7 @@ export function ChatPage() {
     send,
     interrupt,
     abort,
+    answerQuestion,
     reattach,
     setHistory,
     clearBubbles,
@@ -160,7 +161,7 @@ export function ChatPage() {
           {!activeId && !convsLoading && (
             <div className={styles.empty}>
               <img src="/favicon.svg" width={52} height={52} alt="" />
-              <p className={styles.emptyTitle}>欢迎使用 Familiar</p>
+              <p className={styles.emptyTitle}>欢迎使用 Familiar（使魔）</p>
               <p className={styles.emptyHint}>
                 点击左侧「+」新建一个对话开始聊天
               </p>
@@ -181,7 +182,11 @@ export function ChatPage() {
           )}
 
           {bubbles.map((bubble) => (
-            <MessageBubble key={bubble.key} bubble={bubble} />
+            <MessageBubble
+              key={bubble.key}
+              bubble={bubble}
+              onAnswer={answerQuestion}
+            />
           ))}
 
           {/* Error banner */}

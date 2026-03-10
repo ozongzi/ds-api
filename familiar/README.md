@@ -179,12 +179,12 @@ sudo -u postgres psql -c "CREATE DATABASE familiar OWNER familiar;"
 sudo -u postgres psql -d familiar -c "CREATE EXTENSION vector;"
 ```
 
-**2. Environment file**
+**2. Configuration file**
 
 ```bash
 sudo mkdir -p /etc/familiar
-sudo nano /etc/familiar/.env   # fill in the variables above
-sudo chmod 600 /etc/familiar/.env
+sudo nano /etc/familiar/config.toml   # fill in the variables above
+sudo chmod 600 /etc/familiar/config.toml
 ```
 
 **3. Systemd unit**
@@ -198,9 +198,9 @@ Requires=postgresql.service
 [Service]
 Type=simple
 WorkingDirectory=/srv/familiar
-EnvironmentFile=/etc/familiar/.env
 Environment=RUST_LOG=info
 ExecStart=/usr/local/bin/familiar
+# Notes: configuration is read from /etc/familiar/config.toml by the service
 Restart=on-failure
 RestartSec=5
 

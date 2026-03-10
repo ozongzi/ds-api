@@ -31,8 +31,8 @@ pub struct MessageRow {
     pub role: String,
     pub name: Option<String>,
     pub content: Option<String>,
-    pub tool_calls: Option<String>,
-    pub tool_call_id: Option<String>,
+    pub spell_casts: Option<String>,
+    pub spell_cast_id: Option<String>,
     pub is_summary: bool,
     pub created_at: i64,
 }
@@ -70,7 +70,7 @@ impl Db {
         let row_id: i64 = sqlx::query_scalar(
             r#"
             INSERT INTO messages
-                (conversation_id, role, name, content, tool_calls, tool_call_id,
+                (conversation_id, role, name, content, spell_casts, spell_cast_id,
                  is_summary, created_at, embedding)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
@@ -128,7 +128,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   tool_calls, tool_call_id, is_summary, created_at
+                   spell_casts, spell_cast_id, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1 AND id >= $2
             ORDER BY id ASC
@@ -154,7 +154,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   tool_calls, tool_call_id, is_summary, created_at
+                   spell_casts, spell_cast_id, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1
               AND content_tsv @@ plainto_tsquery('simple', $2)
@@ -184,7 +184,7 @@ impl Db {
         let rows: Vec<(MessageRow, f32)> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   tool_calls, tool_call_id, is_summary, created_at,
+                   spell_casts, spell_cast_id, is_summary, created_at,
                    (1 - (embedding <=> $2))::float4 AS similarity
             FROM messages
             WHERE conversation_id = $1
@@ -207,8 +207,8 @@ impl Db {
                     role: r.role,
                     name: r.name,
                     content: r.content,
-                    tool_calls: r.tool_calls,
-                    tool_call_id: r.tool_call_id,
+                    spell_casts: r.spell_casts,
+                    spell_cast_id: r.spell_cast_id,
                     is_summary: r.is_summary,
                     created_at: r.created_at,
                 },
@@ -228,7 +228,7 @@ impl Db {
         let rows: Vec<MessageRow> = sqlx::query_as(
             r#"
             SELECT id, conversation_id, role, name, content,
-                   tool_calls, tool_call_id, is_summary, created_at
+                   spell_casts, spell_cast_id, is_summary, created_at
             FROM messages
             WHERE conversation_id = $1
             ORDER BY id ASC
@@ -252,8 +252,8 @@ struct SemanticRow {
     role: String,
     name: Option<String>,
     content: Option<String>,
-    tool_calls: Option<String>,
-    tool_call_id: Option<String>,
+    spell_casts: Option<String>,
+    spell_cast_id: Option<String>,
     is_summary: bool,
     created_at: i64,
     similarity: f32,
@@ -288,7 +288,7 @@ pub fn row_to_message(row: MessageRow) -> Message {
     use ds_api::raw::request::message::ToolCall;
 
     let tool_calls: Option<Vec<ToolCall>> = row
-        .tool_calls
+        .spell_casts
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
@@ -296,7 +296,7 @@ pub fn row_to_message(row: MessageRow) -> Message {
         role: str_to_role(&row.role),
         content: row.content,
         name: row.name,
-        tool_call_id: row.tool_call_id,
+        tool_call_id: row.spell_cast_id,
         tool_calls,
         reasoning_content: None,
         prefix: None,
