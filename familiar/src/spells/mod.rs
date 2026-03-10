@@ -7,7 +7,7 @@ mod present_file_spell;
 mod script_spell;
 mod search_spell;
 
-pub use a2a_tool::A2aSpell;
+pub use a2a_spell::A2aSpell;
 pub use command_tool::CommandSpell;
 pub use file_tool::FileSpell;
 pub use history_tool::HistorySpell;
