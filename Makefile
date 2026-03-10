@@ -39,7 +39,6 @@ deploy: all
 	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
 	ssh $(HOST) "mkdir -p /srv/familiar/client/dist"
 	rsync -av --delete $(CLIENT_DIR)/dist/ $(HOST):/srv/familiar/client/dist/
-	scp familiar/system_prompt.txt $(HOST):/srv/familiar/system_prompt.txt
 	scp familiar/config.toml $(HOST):/srv/familiar/config.toml
 	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"

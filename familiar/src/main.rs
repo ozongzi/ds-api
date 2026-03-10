@@ -2,8 +2,8 @@ mod config;
 mod db;
 mod embedding;
 mod errors;
-mod state;
 mod spells;
+mod state;
 mod web;
 
 use std::sync::Arc;
@@ -14,6 +14,13 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() {
+    // env::set_current_dir(
+    //     env::var("HOME")
+    //         .or_else(|_| env::var("USERPROFILE"))
+    //         .unwrap_or_else(|_| String::from("/root")),
+    // )
+    // .unwrap();
+
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
@@ -46,11 +53,11 @@ async fn main() {
     // Count tool definitions from built-in spells (no MCP).
     // We build a throw-away agent to measure this rather than hard-coding a number.
     let builtin_tool_count = {
+        use ds_api::Tool;
         use spells::{
             A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, ManageMcpSpell,
             OutlineSpell, PresentFileSpell, ScriptSpell, SearchSpell,
         };
-        use ds_api::Tool;
         use std::sync::Arc;
         use std::sync::atomic::AtomicBool;
 
@@ -74,22 +81,35 @@ async fn main() {
             + A2aSpell.raw_tools().len()
             + SearchSpell.raw_tools().len()
             + OutlineSpell.raw_tools().len()
-            + AskUserSpell { pending: dummy_pending }.raw_tools().len()
+            + AskUserSpell {
+                pending: dummy_pending,
+            }
+            .raw_tools()
+            .len()
             + ManageMcpSpell {
                 mcp_tools: dummy_mcp,
                 agent_stale: dummy_stale,
                 builtin_tool_count: 0,
                 max_tools: 0,
-            }.raw_tools().len()
+            }
+            .raw_tools()
+            .len()
             + HistorySpell {
                 db: dummy_db,
                 embed: dummy_embed,
                 conversation_id: dummy_conv,
-            }.raw_tools().len()
+            }
+            .raw_tools()
+            .len()
     };
     info!("built-in tool count: {builtin_tool_count}");
 
-    let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools, builtin_tool_count));
+    let state = Arc::new(state::AppState::new(
+        &cfg,
+        pool,
+        mcp_tools,
+        builtin_tool_count,
+    ));
     let web_state = web::AppState(Arc::clone(&state));
 
     // ── Web server ────────────────────────────────────────────────────────────

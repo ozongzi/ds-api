@@ -1,45 +1,9 @@
 use ds_api::tool;
-use serde_json::{Value, json};
-use std::{env, path::PathBuf};
+use serde_json::json;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
-
-fn get_cwd(cwd: Option<String>) -> Result<PathBuf, Value> {
-    // Determine default home dir: HOME, then USERPROFILE, otherwise /root
-    let default_home = env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .unwrap_or_else(|_| String::from("/root"));
-
-    let current_dir: PathBuf;
-
-    if let Some(dir) = cwd {
-        // If provided cwd is relative, resolve it relative to the default_home and canonicalize.
-        let path = std::path::Path::new(&dir);
-        if path.is_relative() {
-            let joined = std::path::Path::new(&default_home).join(path);
-            match std::fs::canonicalize(&joined) {
-                Ok(p) => {
-                    current_dir = PathBuf::from(p);
-                }
-                Err(e) => {
-                    return Err(json!({
-                        "error": format!("failed to canonicalize cwd '{}': {}", joined.display(), e)
-                    }));
-                }
-            }
-        } else {
-            // absolute path: use as-is
-            current_dir = PathBuf::from(path);
-        }
-    } else {
-        // No cwd provided: use resolved default_home
-        current_dir = PathBuf::from(default_home);
-    }
-
-    Ok(current_dir)
-}
 
 pub struct CommandSpell;
 
@@ -57,10 +21,16 @@ impl Tool for CommandSpell {
     ) -> Value {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&command);
-        cmd.current_dir(match get_cwd(cwd) {
-            Ok(p) => p,
-            Err(e) => return json!({ "error": e.to_string() }),
-        });
+
+        if let Some(dir) = cwd {
+            // If provided cwd is relative, resolve it relative to the default_home and canonicalize.
+            match std::fs::canonicalize(dir) {
+                Ok(cwd) => {
+                    cmd.current_dir(cwd);
+                }
+                Err(e) => return json!(format!("Error: {e}")),
+            }
+        }
 
         let timeout_secs = timeout_secs.unwrap_or(20);
 

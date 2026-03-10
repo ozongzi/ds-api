@@ -51,7 +51,7 @@ pub struct EmbeddingConfig {
 pub struct ServerConfig {
     pub port: u16,
     /// Path to a file whose contents become the system prompt.
-    pub system_prompt_file: Option<String>,
+    pub system_prompt: Option<String>,
 }
 
 /// A single MCP server to launch at startup.
@@ -90,14 +90,19 @@ fn default_max_tools() -> usize {
 
 impl Default for LimitsConfig {
     fn default() -> Self {
-        Self { max_tools: default_max_tools() }
+        Self {
+            max_tools: default_max_tools(),
+        }
     }
 }
 
 impl Config {
     pub fn load() -> Self {
+        let config_path =
+            std::env::var("FAMILIAR_CONFIG").unwrap_or("/srv/familiar/config.toml".into());
+
         let cfg = Cfg::builder()
-            .add_source(File::with_name("config").required(true))
+            .add_source(File::with_name(&config_path).required(true))
             .add_source(
                 Environment::with_prefix("FAMILIAR")
                     .separator("__")
@@ -111,11 +116,6 @@ impl Config {
 
     /// Read the system prompt from disk if `server.system_prompt_file` is set.
     pub fn system_prompt(&self) -> Option<String> {
-        let path = self.server.system_prompt_file.as_deref()?;
-        match std::fs::read_to_string(path) {
-            Ok(s) => Some(s.trim().to_string()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => panic!("failed to read system_prompt_file '{path}': {e}"),
-        }
+        self.server.system_prompt.clone()
     }
 }
