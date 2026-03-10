@@ -1,4 +1,5 @@
 mod a2a_spell;
+mod ask_user_spell;
 mod command_spell;
 mod file_spell;
 mod history_spell;
@@ -8,6 +9,7 @@ mod script_spell;
 mod search_spell;
 
 pub use a2a_spell::A2aSpell;
+pub use ask_user_spell::AskUserSpell;
 pub use command_spell::CommandSpell;
 pub use file_spell::FileSpell;
 pub use history_spell::HistorySpell;

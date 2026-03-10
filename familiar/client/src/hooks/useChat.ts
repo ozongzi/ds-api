@@ -138,6 +138,12 @@ export function useChat(conversationId: string | null, token: string | null) {
     ws.send(JSON.stringify({ type: "abort" }));
   }, []);
 
+  const answerQuestion = useCallback((text: string) => {
+    const ws = wsLiveRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "answer", content: text }));
+  }, []);
+
   // ── Core WebSocket event processor (shared by send and reattach) ───────
 
   /**
@@ -407,6 +413,7 @@ export function useChat(conversationId: string | null, token: string | null) {
     send,
     interrupt,
     abort,
+    answerQuestion,
     reattach,
     setHistory,
     clearBubbles,

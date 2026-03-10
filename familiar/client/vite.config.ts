@@ -25,7 +25,6 @@ export default defineConfig({
         manualChunks: {
           hljs: ["highlight.js"],
           "react-vendor": ["react", "react-dom"],
-          "marked-dompurify": ["marked", "dompurify"],
         },
       },
     },

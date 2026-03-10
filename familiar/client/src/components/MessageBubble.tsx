@@ -17,11 +17,15 @@ import styles from "./MessageBubble.module.css";
 
 interface Props {
   bubble: ChatBubble;
+  onAnswer?: (text: string) => void;
 }
 
-export const MessageBubble = memo(function MessageBubble({ bubble }: Props) {
+export const MessageBubble = memo(function MessageBubble({
+  bubble,
+  onAnswer,
+}: Props) {
   if (bubble.kind === "tool") {
-    return <ToolCallBubble bubble={bubble} />;
+    return <ToolCallBubble bubble={bubble} onAnswer={onAnswer} />;
   }
   return <TextChatBubble bubble={bubble} />;
 });
@@ -152,8 +156,10 @@ function extractArgsField(raw: string, key: string): string | null {
 
 function ToolCallBubble({
   bubble,
+  onAnswer,
 }: {
   bubble: Extract<ChatBubble, { kind: "tool" }>;
+  onAnswer?: (text: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const autoExpandedRef = useRef(false);
@@ -274,6 +280,26 @@ function ToolCallBubble({
     const field = bubble.name === "str_replace" ? "new_str" : "content";
     return extractArgsField(bubble.argsRaw, field);
   }, [isEditTool, bubble.pending, bubble.name, bubble.argsRaw, args]);
+
+  // ── Early return: ask_user → question card ───────────────────────────────
+  if (bubble.name === "ask_user") {
+    const answeredText =
+      !bubble.pending && bubble.result
+        ? (bubble.result as Record<string, unknown>)["answer"] as
+            | string
+            | undefined
+        : undefined;
+    return (
+      <div className={styles.toolRow}>
+        <AskUserCard
+          question={args?.question ? String(args.question) : "…"}
+          options={args?.options as string[] | undefined}
+          onAnswer={onAnswer}
+          answered={answeredText}
+        />
+      </div>
+    );
+  }
 
   // ── Early return: present_file → file card ────────────────────────────────
   if (bubble.name === "present_file" && fileResult) {
@@ -446,6 +472,79 @@ function ToolCallBubble({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Ask-user card ────────────────────────────────────────────────────────────
+
+function AskUserCard({
+  question,
+  options,
+  onAnswer,
+  answered,
+}: {
+  question: string;
+  options?: string[];
+  onAnswer?: (text: string) => void;
+  answered?: string;
+}) {
+  const [custom, setCustom] = useState("");
+
+  if (answered !== undefined) {
+    return (
+      <div className={styles.askUserCard}>
+        <p className={styles.askUserQuestion}>{question}</p>
+        <div className={styles.askUserAnswered}>
+          <span className={styles.askUserAnsweredLabel}>已回答：</span>
+          <span className={styles.askUserAnsweredText}>{answered}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.askUserCard}>
+      <p className={styles.askUserQuestion}>{question}</p>
+      {options && options.length > 0 && (
+        <div className={styles.askUserOptions}>
+          {options.map((opt, i) => (
+            <button
+              key={i}
+              className={styles.askUserOption}
+              onClick={() => onAnswer?.(opt)}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+      <form
+        className={styles.askUserForm}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const val = custom.trim();
+          if (val) {
+            onAnswer?.(val);
+            setCustom("");
+          }
+        }}
+      >
+        <input
+          className={styles.askUserInput}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder="自定义回答…"
+          autoFocus
+        />
+        <button
+          type="submit"
+          className={styles.askUserSubmit}
+          disabled={!custom.trim()}
+        >
+          发送
+        </button>
+      </form>
     </div>
   );
 }

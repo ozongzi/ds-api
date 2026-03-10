@@ -73,6 +73,7 @@ export type WsClientMsg =
   | { token: string }
   | { content: string }
   | { type: "interrupt"; content: string }
+  | { type: "answer"; content: string }
   | { type: "abort" };
 
 // ─── UI-only chat bubble ──────────────────────────────────────────────────

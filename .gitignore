@@ -5,3 +5,4 @@ target/
 rpg_stage/
 **/node_modules/
 **/dist/
+**/CLAUDE.md

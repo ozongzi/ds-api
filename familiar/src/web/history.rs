@@ -49,8 +49,8 @@ pub async fn list_messages(
                 role: r.role,
                 name: r.name,
                 content: r.content,
-                tool_calls: r.tool_calls,
-                tool_call_id: r.tool_call_id,
+                tool_calls: r.spell_casts,
+                tool_call_id: r.spell_cast_id,
                 is_summary: r.is_summary,
                 created_at: r.created_at,
             })

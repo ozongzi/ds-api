@@ -28,6 +28,7 @@ export function ChatPage() {
     send,
     interrupt,
     abort,
+    answerQuestion,
     reattach,
     setHistory,
     clearBubbles,
@@ -181,7 +182,11 @@ export function ChatPage() {
           )}
 
           {bubbles.map((bubble) => (
-            <MessageBubble key={bubble.key} bubble={bubble} />
+            <MessageBubble
+              key={bubble.key}
+              bubble={bubble}
+              onAnswer={answerQuestion}
+            />
           ))}
 
           {/* Error banner */}

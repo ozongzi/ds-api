@@ -15,8 +15,8 @@ use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{
-    A2aSpell, CommandSpell, FileSpell, HistorySpell, OutlineSpell, PresentFileSpell, ScriptSpell,
-    SearchSpell,
+    A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, OutlineSpell, PresentFileSpell,
+    ScriptSpell, SearchSpell,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -58,10 +58,18 @@ pub struct ChatEntry {
     /// Set to true by ws.rs when the client sends { type: "abort" }.
     /// The generation task polls this flag and stops early when it's set.
     pub abort_flag: Arc<AtomicBool>,
+
+    /// Shared slot for the ask_user spell: while the spell is awaiting user input it
+    /// stores a oneshot::Sender here; ws.rs extracts and fires it with the user's reply.
+    pub ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
 }
 
 impl ChatEntry {
-    fn new(agent: DeepseekAgent, interrupt_tx: UnboundedSender<String>) -> Self {
+    fn new(
+        agent: DeepseekAgent,
+        interrupt_tx: UnboundedSender<String>,
+        ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+    ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
             agent: Some(agent),
@@ -70,6 +78,7 @@ impl ChatEntry {
             event_log: Vec::new(),
             generating: false,
             abort_flag: Arc::new(AtomicBool::new(false)),
+            ask_user_pending,
         }
     }
 
@@ -164,10 +173,15 @@ impl AppState {
     }
 
     /// Build a fresh agent for `conversation_id`, restoring history from PG.
+    /// Returns the agent, the interrupt sender, and the shared ask_user pending slot.
     pub async fn build_agent(
         &self,
         conversation_id: Uuid,
-    ) -> (DeepseekAgent, UnboundedSender<String>) {
+    ) -> (
+        DeepseekAgent,
+        UnboundedSender<String>,
+        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+    ) {
         let history = match self.db.restore(conversation_id).await {
             Ok(h) => {
                 info!(conversation = %conversation_id, messages = h.len(), "restored history");
@@ -178,6 +192,8 @@ impl AppState {
                 vec![]
             }
         };
+
+        let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
 
         let mut builder = DeepseekAgent::custom(
             self.deepseek_token.clone(),
@@ -193,6 +209,9 @@ impl AppState {
         .add_tool(A2aSpell)
         .add_tool(SearchSpell)
         .add_tool(OutlineSpell)
+        .add_tool(AskUserSpell {
+            pending: Arc::clone(&ask_user_pending),
+        })
         .add_tool(HistorySpell {
             db: self.db.clone(),
             embed: self.embed.clone(),
@@ -207,7 +226,23 @@ impl AppState {
             builder = builder.with_system_prompt(prompt.clone());
         }
 
-        builder.with_interrupt_channel()
+        let (agent, tx) = builder.with_interrupt_channel();
+        (agent, tx, ask_user_pending)
+    }
+
+    /// Deliver a user's answer to a waiting `ask_user` spell.
+    pub async fn deliver_answer(&self, conversation_id: Uuid, answer: String) {
+        let pending = {
+            let map = self.chats.lock().unwrap();
+            map.get(&conversation_id)
+                .map(|e| Arc::clone(&e.ask_user_pending))
+        };
+        if let Some(pending) = pending {
+            let mut guard = pending.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(answer);
+            }
+        }
     }
 
     /// Ensure a `ChatEntry` exists for `conversation_id`, building one if needed.
@@ -229,8 +264,8 @@ impl AppState {
         }
 
         // Slow path — build agent outside the lock.
-        let (agent, tx) = self.build_agent(conversation_id).await;
-        let entry = ChatEntry::new(agent, tx);
+        let (agent, tx, ask_user_pending) = self.build_agent(conversation_id).await;
+        let entry = ChatEntry::new(agent, tx, ask_user_pending);
         let rx = entry.broadcast_tx.subscribe();
         let log = entry.event_log.clone();
         let generating = entry.generating;

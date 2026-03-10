@@ -93,7 +93,7 @@ export function DiffView({
   const CONTEXT = 3;
   const visible = useMemo(() => {
     if (mode === "write") return lines; // all lines are added, show all
-    if (streaming) return lines; // 流式期间不折叠，避免 new_str 未完整时 unchanged 行被隐藏
+    if (streaming) return lines.map((line, idx) => ({ kind: "line" as const, line, idx })); // 流式期间不折叠，避免 new_str 未完整时 unchanged 行被隐藏
     const changed = new Set<number>();
     lines.forEach((l, i) => {
       if (l.type !== "unchanged") changed.add(i);
