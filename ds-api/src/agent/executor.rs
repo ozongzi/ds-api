@@ -129,7 +129,18 @@ pub(crate) fn raw_to_tool_call_info(tc: &ToolCall) -> ToolCallInfo {
 /// If the agent has at least one tool registered, `tool_choice` is set to `auto`
 /// so the model can freely decide whether to call a tool.
 pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
-    let history = agent.conversation.history().to_vec();
+    // Defensively strip reasoning_content from every message before sending.
+    // DeepSeek returns 400 if reasoning_content appears in input messages.
+    let history = agent
+        .conversation
+        .history()
+        .iter()
+        .cloned()
+        .map(|mut m| {
+            m.reasoning_content = None;
+            m
+        })
+        .collect::<Vec<_>>();
     let mut req = ApiRequest::builder()
         .with_model(agent.model.clone())
         .messages(history);
@@ -185,7 +196,11 @@ pub(crate) async fn fetch_response(
     let content = assistant_msg.content.clone();
     let reasoning_content = assistant_msg.reasoning_content.clone();
     let raw_tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
-    agent.conversation.history_mut().push(assistant_msg);
+    // Strip reasoning_content before storing in history — DeepSeek returns 400
+    // if reasoning_content appears in any input message on subsequent turns.
+    let mut history_msg = assistant_msg;
+    history_msg.reasoning_content = None;
+    agent.conversation.history_mut().push(history_msg);
 
     (
         Ok(FetchResult {
@@ -301,11 +316,9 @@ pub(crate) fn finalize_stream(data: &mut StreamingData) -> Vec<ToolCall> {
         } else {
             Some(std::mem::take(&mut data.content_buf))
         },
-        reasoning_content: if data.reasoning_buf.is_empty() {
-            None
-        } else {
-            Some(std::mem::take(&mut data.reasoning_buf))
-        },
+        // Do NOT store reasoning_content in history — DeepSeek returns 400
+        // if reasoning_content appears in any input message on subsequent turns.
+        reasoning_content: None,
         tool_calls: if raw_tool_calls.is_empty() {
             None
         } else {
@@ -313,6 +326,8 @@ pub(crate) fn finalize_stream(data: &mut StreamingData) -> Vec<ToolCall> {
         },
         ..Default::default()
     };
+    // Discard the accumulated reasoning buf without storing it.
+    data.reasoning_buf.clear();
     data.agent.conversation.history_mut().push(assistant_msg);
 
     raw_tool_calls
