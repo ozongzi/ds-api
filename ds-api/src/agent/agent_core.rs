@@ -303,6 +303,14 @@ impl DeepseekAgent {
     /// `Idle` transition so that injected messages are visible before each API
     /// turn, not just after tool-execution rounds.
     pub(crate) fn drain_interrupts(&mut self) {
+        // Strip reasoning_content from all history messages at the start of
+        // every new Turn. deepseek-reasoner requires reasoning_content to be
+        // sent back within the same Turn (between tool calls), but forbids it
+        // at the beginning of a new Turn.
+        for msg in self.conversation.history_mut().iter_mut() {
+            msg.reasoning_content = None;
+        }
+
         if let Some(rx) = self.interrupt_rx.as_mut() {
             while let Ok(msg) = rx.try_recv() {
                 self.conversation
