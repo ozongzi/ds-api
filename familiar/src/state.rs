@@ -13,9 +13,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
-use crate::tools::{
-    A2aTool, CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool, SelfUpdateTool,
-};
+use crate::tools::{A2aTool, CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // How many events to keep in the log for late-joining clients.
@@ -184,7 +182,6 @@ impl AppState {
             .add_tool(ScriptTool)
             .add_tool(PresentFileTool)
             .add_tool(A2aTool)
-            .add_tool(SelfUpdateTool)
             .add_tool(HistoryTool {
                 db: self.db.clone(),
                 embed: self.embed.clone(),
@@ -417,7 +414,7 @@ async fn run_generation(
                         "name": res.name,
                         "result": res.result,
                     }).to_string(),
-                    Ok(AgentEvent::ReasoningToken(_)) => continue,
+
                     Err(e) => {
                         error!(conversation = %conversation_id, "agent error: {e}");
                         let payload = json!({"type": "error", "message": e.to_string()}).to_string();
