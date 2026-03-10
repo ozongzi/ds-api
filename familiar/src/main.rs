@@ -20,7 +20,7 @@ async fn main() {
         )
         .init();
 
-    let cfg = config::Config::from_env();
+    let cfg = config::Config::load();
 
     info!("familiar starting");
 
@@ -28,7 +28,7 @@ async fn main() {
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect(&cfg.database_url)
+        .connect(&cfg.secrets.database_url)
         .await
         .unwrap_or_else(|e| panic!("failed to connect to database: {e}"));
 
@@ -41,14 +41,14 @@ async fn main() {
 
     // ── App state ─────────────────────────────────────────────────────────────
 
-    let mcp_tools = state::AppState::init_mcp().await;
+    let mcp_tools = state::AppState::init_mcp(&cfg.mcp).await;
     let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools));
     let web_state = web::AppState(Arc::clone(&state));
 
     // ── Web server ────────────────────────────────────────────────────────────
 
     let router = web::create_router(web_state);
-    let addr = format!("0.0.0.0:{}", cfg.port);
+    let addr = format!("0.0.0.0:{}", cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));

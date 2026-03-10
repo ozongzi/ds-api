@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::config::McpServerConfig;
 use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use ds_api::McpTool;
@@ -13,7 +14,10 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
-use crate::tools::{A2aTool, CommandTool, FileTool, HistoryTool, PresentFileTool, ScriptTool};
+use crate::tools::{
+    A2aTool, CommandTool, FileTool, HistoryTool, OutlineTool, PresentFileTool, ScriptTool,
+    SearchTool,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // How many events to keep in the log for late-joining clients.
@@ -96,6 +100,12 @@ pub struct AppState {
     /// DeepSeek API key, used when constructing new agents.
     pub deepseek_token: String,
 
+    /// Base URL for the DeepSeek-compatible API.
+    pub model_api_base: String,
+
+    /// Model name to use for every agent turn.
+    pub model_name: String,
+
     /// Optional system prompt applied to every freshly created agent.
     pub system_prompt: Option<String>,
 
@@ -118,41 +128,36 @@ impl AppState {
         let db = Db::new(pool.clone());
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
-            deepseek_token: cfg.deepseek_token.clone(),
-            system_prompt: cfg.system_prompt.clone(),
+            deepseek_token: cfg.secrets.deepseek_api_key.clone(),
+            model_api_base: cfg.model.api_base.clone(),
+            model_name: cfg.model.name.clone(),
+            system_prompt: cfg.system_prompt(),
             pool,
             db,
-            embed: EmbeddingClient::new(cfg.openrouter_token.clone()),
+            embed: EmbeddingClient::new(
+                cfg.secrets.openrouter_api_key.clone(),
+                cfg.embedding.api_base.clone(),
+                cfg.embedding.model.clone(),
+            ),
             mcp_tools,
         }
     }
 
-    /// Initialise MCP servers. Called once at startup.
+    /// Initialise MCP servers from config. Called once at startup.
     /// Failures are logged and skipped — a missing MCP server should never
     /// prevent familiar from starting.
-    pub async fn init_mcp() -> Vec<McpTool> {
+    pub async fn init_mcp(mcp_configs: &[McpServerConfig]) -> Vec<McpTool> {
         let mut tools = Vec::new();
 
-        match McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await {
-            Ok(t) => {
-                info!("MCP: playwright ready");
-                tools.push(t);
+        for mc in mcp_configs {
+            let args: Vec<&str> = mc.args.iter().map(|s| s.as_str()).collect();
+            match McpTool::stdio(&mc.command, &args).await {
+                Ok(t) => {
+                    info!("MCP: {} ready", mc.name);
+                    tools.push(t);
+                }
+                Err(e) => warn!("MCP: {} failed to start: {e}", mc.name),
             }
-            Err(e) => warn!("MCP: playwright failed to start: {e}"),
-        }
-        match McpTool::stdio("uvx", &["mcp-server-fetch"]).await {
-            Ok(t) => {
-                info!("MCP: fetch ready");
-                tools.push(t);
-            }
-            Err(e) => warn!("MCP: fetch failed to start: {e}"),
-        }
-        match McpTool::stdio("npx", &["-y", "@modelcontextprotocol/server-github"]).await {
-            Ok(t) => {
-                info!("MCP: github ready");
-                tools.push(t);
-            }
-            Err(e) => warn!("MCP: github failed to start: {e}"),
         }
 
         tools
@@ -176,8 +181,8 @@ impl AppState {
 
         let mut builder = DeepseekAgent::custom(
             self.deepseek_token.clone(),
-            "https://api.deepseek.com",
-            "deepseek-reasoner",
+            self.model_api_base.clone(),
+            self.model_name.clone(),
         )
         .with_streaming()
         .with_history(history)
@@ -186,6 +191,8 @@ impl AppState {
         .add_tool(ScriptTool)
         .add_tool(PresentFileTool)
         .add_tool(A2aTool)
+        .add_tool(SearchTool)
+        .add_tool(OutlineTool)
         .add_tool(HistoryTool {
             db: self.db.clone(),
             embed: self.embed.clone(),

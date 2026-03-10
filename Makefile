@@ -26,38 +26,23 @@ dev-client:
 dev-server:
 	cargo run -p familiar
 
-# ── Sync source to server (no git required on server) ────────────────────────
-sync:
-	rsync -av --delete \
-		--exclude 'target/' \
-		--exclude 'client/node_modules/' \
-		--exclude 'client/dist/' \
-		--exclude '.env' \
-		familiar/ $(HOST):$(REMOTE_SRC)/familiar/
-	rsync -av --exclude 'target/' ds-api/ $(HOST):$(REMOTE_SRC)/ds-api/
-	rsync -av --exclude 'target/' ds-api-macros/ $(HOST):$(REMOTE_SRC)/ds-api-macros/
-	rsync -av Cargo.toml Cargo.lock $(HOST):$(REMOTE_SRC)/
+
 
 # ── Full build (backend + frontend) ───────────────────────────────────────────
 all: build-client build
 
-# ── Deploy (local cross-compile → scp binary) ────────────────────────────────
+# ── Deploy (local cross-compile → scp binary + client, then restart) ─────────
+# scp/rsync first, restart last — never stop before copying so the running
+# process is never killed mid-tool-call by its own deploy.
 deploy: all
-	ssh $(HOST) "systemctl stop familiar"
-	scp $(BIN) $(HOST):/usr/local/bin/familiar
+	scp $(BIN) $(HOST):/usr/local/bin/familiar.new
+	ssh $(HOST) "mv /usr/local/bin/familiar.new /usr/local/bin/familiar"
 	ssh $(HOST) "mkdir -p /srv/familiar/client/dist"
 	rsync -av --delete $(CLIENT_DIR)/dist/ $(HOST):/srv/familiar/client/dist/
-	ssh $(HOST) "systemctl start familiar"
+	scp familiar/system_prompt.txt $(HOST):/srv/familiar/system_prompt.txt
+	scp familiar/config.toml $(HOST):/srv/familiar/config.toml
+	ssh $(HOST) "systemctl restart familiar"
 	@echo "✓ deployed"
-
-# ── Deploy remote (sync source → build on server → restart) ──────────────────
-deploy-remote: build-client sync build-remote
-	ssh $(HOST) "systemctl stop familiar"
-	ssh $(HOST) "cp $(REMOTE_SRC)/target/release/familiar /usr/local/bin/familiar"
-	ssh $(HOST) "mkdir -p /srv/familiar/client/dist"
-	rsync -av --delete $(CLIENT_DIR)/dist/ $(HOST):/srv/familiar/client/dist/
-	ssh $(HOST) "systemctl start familiar"
-	@echo "✓ deployed (remote build)"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 clean:

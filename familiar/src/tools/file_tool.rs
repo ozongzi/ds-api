@@ -98,7 +98,7 @@ impl Tool for FileTool {
     /// 获取文件内容（行号为 1-based）。
     /// 若不传 from/to 则返回全文（受 8000 字符限制截断）。
     /// 传入行范围时返回第 from 行到第 to 行（含两端，从 1 开始）。
-    /// 建议先用 get_file_info 查看总行数，再按需分段读取大文件。
+    /// 对于大文件，建议先用 outline 获取符号表定位行号，或用 get_file_info 查看总行数后分段读取。
     /// path: 文件路径
     /// from: 起始行号（含，从 1 开始），可选，默认第 1 行
     /// to: 结束行号（含，从 1 开始），可选，默认最后一行
@@ -115,13 +115,24 @@ impl Tool for FileTool {
         let to_1 = to.unwrap_or(total);
 
         if from_1 == 0 {
-            return json!({ "error": "from 行号从 1 开始，不能为 0" });
+            return json!({
+                "error": format!("from 行号从 1 开始，不能为 0。该文件共 {total} 行，有效范围：1–{total}")
+            });
         }
         if from_1 > to_1 {
-            return json!({ "error": format!("from ({from_1}) 不能大于 to ({to_1})") });
+            return json!({
+                "error": format!("from ({from_1}) 不能大于 to ({to_1})。该文件共 {total} 行，有效范围：1–{total}")
+            });
+        }
+        if from_1 > total {
+            return json!({
+                "error": format!("from ({from_1}) 超出文件总行数。该文件共 {total} 行，有效范围：1–{total}")
+            });
         }
         if to_1 > total {
-            return json!({ "error": format!("to ({to_1}) 超出文件总行数 ({total})") });
+            return json!({
+                "error": format!("to ({to_1}) 超出文件总行数。该文件共 {total} 行，有效范围：1–{total}。如需读到末尾，可省略 to 参数或传 {total}")
+            });
         }
 
         // 转为 0-based 索引

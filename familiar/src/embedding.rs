@@ -1,18 +1,14 @@
-//! Thin client for the OpenRouter embeddings endpoint.
-//!
-//! Uses `openai/text-embedding-3-small` (1536 dimensions).
-//! Called with `tokio::task::spawn_blocking` is NOT needed here — reqwest is async.
+//! Thin client for the OpenRouter embeddings endpoint (or any OpenAI-compatible provider).
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-
-const EMBEDDING_URL: &str = "https://openrouter.ai/api/v1/embeddings";
-const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 
 #[derive(Clone)]
 pub struct EmbeddingClient {
     client: Client,
     token: String,
+    api_base: String,
+    model: String,
 }
 
 #[derive(Serialize)]
@@ -32,21 +28,29 @@ struct EmbedData {
 }
 
 impl EmbeddingClient {
-    pub fn new(token: impl Into<String>) -> Self {
+    pub fn new(
+        token: impl Into<String>,
+        api_base: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             client: Client::new(),
             token: token.into(),
+            api_base: api_base.into(),
+            model: model.into(),
         }
     }
 
-    /// Embed a single string. Returns a 1536-dimensional vector.
+    /// Embed a single string. Returns a vector of the model's native dimensionality.
     pub async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let url = format!("{}/embeddings", self.api_base.trim_end_matches('/'));
+
         let resp: EmbedResponse = self
             .client
-            .post(EMBEDDING_URL)
+            .post(&url)
             .bearer_auth(&self.token)
             .json(&EmbedRequest {
-                model: EMBEDDING_MODEL,
+                model: &self.model,
                 input: text,
             })
             .send()
