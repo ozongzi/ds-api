@@ -417,6 +417,7 @@ async fn run_generation(
                         "name": res.name,
                         "result": res.result,
                     }).to_string(),
+                    Ok(AgentEvent::ReasoningToken(_)) => continue,
                     Err(e) => {
                         error!(conversation = %conversation_id, "agent error: {e}");
                         let payload = json!({"type": "error", "message": e.to_string()}).to_string();
