@@ -8,13 +8,13 @@ mod script_spell;
 mod search_spell;
 
 pub use a2a_spell::A2aSpell;
-pub use command_tool::CommandSpell;
-pub use file_tool::FileSpell;
-pub use history_tool::HistorySpell;
-pub use outline_tool::OutlineSpell;
-pub use present_file::PresentFileSpell;
-pub use script_tool::ScriptSpell;
-pub use search_tool::SearchSpell;
+pub use command_spell::CommandSpell;
+pub use file_spell::FileSpell;
+pub use history_spell::HistorySpell;
+pub use outline_spell::OutlineSpell;
+pub use present_file_spell::PresentFileSpell;
+pub use script_spell::ScriptSpell;
+pub use search_spell::SearchSpell;
 
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
 
