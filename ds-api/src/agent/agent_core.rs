@@ -50,6 +50,9 @@ pub struct ToolCallResult {
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Token(String),
+    /// Emitted when the model produces reasoning/thinking content (e.g. deepseek-reasoner).
+    /// In streaming mode this arrives token-by-token before the main reply.
+    ReasoningToken(String),
     /// Emitted in streaming mode the instant a tool call's id+name are known.
     ToolCallStart {
         id: String,

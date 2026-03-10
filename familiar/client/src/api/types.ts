@@ -61,6 +61,7 @@ export interface Message {
 
 export type WsServerEvent =
   | { type: "token"; content: string }
+  | { type: "reasoning_token"; content: string }
   | { type: "tool_call_start"; id: string; name: string }
   | { type: "tool_call_args_delta"; id: string; delta: string }
   | { type: "tool_call"; id: string; name: string; args: unknown }
@@ -85,6 +86,7 @@ export interface TextBubble {
   key: string;
   role: "user" | "assistant";
   content: string;
+  reasoning: string;
   streaming: boolean;
 }
 

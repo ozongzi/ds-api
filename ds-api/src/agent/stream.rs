@@ -65,6 +65,9 @@ pub struct AgentStream {
     /// The agent is held here whenever no future has taken ownership of it.
     agent: Option<DeepseekAgent>,
     state: AgentStreamState,
+    /// Small queue for cases where one logical response produces multiple events
+    /// (e.g. non-streaming deepseek-reasoner: ReasoningToken then Token).
+    pending_events: VecDeque<AgentEvent>,
 }
 
 /// Every variant is self-contained: it either holds the agent directly or stores
@@ -102,6 +105,7 @@ impl AgentStream {
         Self {
             agent: Some(agent),
             state: AgentStreamState::Idle,
+            pending_events: VecDeque::new(),
         }
     }
 
@@ -130,6 +134,11 @@ impl Stream for AgentStream {
         let this = self.get_mut();
 
         loop {
+            // Drain any events queued by a previous iteration before polling state.
+            if let Some(ev) = this.pending_events.pop_front() {
+                return Poll::Ready(Some(Ok(ev)));
+            }
+
             // ── StreamingChunks is handled first to avoid borrow-checker
             //    conflicts: we need to both poll the inner stream *and* replace
             //    `this.state`, which requires owning the data.
@@ -154,6 +163,7 @@ impl Stream for AgentStream {
                             let ev = events.swap_remove(0);
                             return Poll::Ready(Some(Ok(match ev {
                                 ChunkEvent::Token(t) => AgentEvent::Token(t),
+                                ChunkEvent::ReasoningToken(t) => AgentEvent::ReasoningToken(t),
                                 ChunkEvent::ToolCallStart { id, name } => {
                                     AgentEvent::ToolCallStart { id, name }
                                 }
@@ -230,11 +240,16 @@ impl Stream for AgentStream {
 
                         if fetch.raw_tool_calls.is_empty() {
                             this.state = AgentStreamState::Done;
-                            return if let Some(text) = fetch.content {
-                                Poll::Ready(Some(Ok(AgentEvent::Token(text))))
-                            } else {
-                                Poll::Ready(None)
-                            };
+                            // Queue both events (reasoning then content) so neither is lost.
+                            if let Some(reasoning) = fetch.reasoning_content {
+                                this.pending_events
+                                    .push_back(AgentEvent::ReasoningToken(reasoning));
+                            }
+                            if let Some(text) = fetch.content {
+                                this.pending_events.push_back(AgentEvent::Token(text));
+                            }
+                            // The pending_events drain at the top of the loop will emit them.
+                            continue;
                         }
 
                         let pending = fetch
@@ -269,6 +284,7 @@ impl Stream for AgentStream {
                             stream,
                             agent,
                             content_buf: String::new(),
+                            reasoning_buf: String::new(),
                             tool_call_bufs: Vec::new(),
                         }));
                         // Loop back to hit the StreamingChunks branch.

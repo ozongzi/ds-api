@@ -174,19 +174,23 @@ impl AppState {
             }
         };
 
-        let mut builder = DeepseekAgent::new(self.deepseek_token.clone())
-            .with_streaming()
-            .with_history(history)
-            .add_tool(CommandTool)
-            .add_tool(FileTool)
-            .add_tool(ScriptTool)
-            .add_tool(PresentFileTool)
-            .add_tool(A2aTool)
-            .add_tool(HistoryTool {
-                db: self.db.clone(),
-                embed: self.embed.clone(),
-                conversation_id,
-            });
+        let mut builder = DeepseekAgent::custom(
+            self.deepseek_token.clone(),
+            "https://api.deepseek.com",
+            "deepseek-reasoner",
+        )
+        .with_streaming()
+        .with_history(history)
+        .add_tool(CommandTool)
+        .add_tool(FileTool)
+        .add_tool(ScriptTool)
+        .add_tool(PresentFileTool)
+        .add_tool(A2aTool)
+        .add_tool(HistoryTool {
+            db: self.db.clone(),
+            embed: self.embed.clone(),
+            conversation_id,
+        });
 
         for mcp_tool in &self.mcp_tools {
             builder = builder.add_tool(mcp_tool.clone());
@@ -414,7 +418,9 @@ async fn run_generation(
                         "name": res.name,
                         "result": res.result,
                     }).to_string(),
-
+                    Ok(AgentEvent::ReasoningToken(token)) => {
+                        json!({"type": "reasoning_token", "content": token}).to_string()
+                    }
                     Err(e) => {
                         error!(conversation = %conversation_id, "agent error: {e}");
                         let payload = json!({"type": "error", "message": e.to_string()}).to_string();

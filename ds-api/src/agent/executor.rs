@@ -32,6 +32,8 @@ use crate::raw::request::message::{FunctionCall, Message, Role, ToolCall, ToolTy
 pub(crate) struct FetchResult {
     /// The assistant's text content, if any.
     pub(crate) content: Option<String>,
+    /// Reasoning/thinking content produced by the model, if any.
+    pub(crate) reasoning_content: Option<String>,
     /// Raw tool-call objects requested by the model.
     pub(crate) raw_tool_calls: Vec<ToolCall>,
 }
@@ -60,6 +62,8 @@ pub(crate) struct StreamingData {
     pub(crate) agent: DeepseekAgent,
     /// Accumulated text content across all deltas for the current turn.
     pub(crate) content_buf: String,
+    /// Accumulated reasoning/thinking content across all deltas for the current turn.
+    pub(crate) reasoning_buf: String,
     /// Per-index partial tool-call buffers; sparse — may contain `None` gaps.
     pub(crate) tool_call_bufs: Vec<Option<PartialToolCall>>,
 }
@@ -68,6 +72,8 @@ pub(crate) struct StreamingData {
 pub(crate) enum ChunkEvent {
     /// A text fragment from the assistant.
     Token(String),
+    /// A reasoning/thinking fragment (deepseek-reasoner).
+    ReasoningToken(String),
     /// A tool call's id and name became known for the first time.
     ToolCallStart { id: String, name: String },
     /// An incremental fragment of a tool call's arguments JSON.
@@ -177,12 +183,14 @@ pub(crate) async fn fetch_response(
 
     let assistant_msg = choice.message;
     let content = assistant_msg.content.clone();
+    let reasoning_content = assistant_msg.reasoning_content.clone();
     let raw_tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
     agent.conversation.history_mut().push(assistant_msg);
 
     (
         Ok(FetchResult {
             content,
+            reasoning_content,
             raw_tool_calls,
         }),
         agent,
@@ -293,6 +301,11 @@ pub(crate) fn finalize_stream(data: &mut StreamingData) -> Vec<ToolCall> {
         } else {
             Some(std::mem::take(&mut data.content_buf))
         },
+        reasoning_content: if data.reasoning_buf.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut data.reasoning_buf))
+        },
         tool_calls: if raw_tool_calls.is_empty() {
             None
         } else {
@@ -365,6 +378,13 @@ pub(crate) fn apply_chunk_delta(
             }
         }
         return events;
+    }
+
+    if let Some(reasoning) = delta.reasoning_content
+        && !reasoning.is_empty()
+    {
+        data.reasoning_buf.push_str(&reasoning);
+        return vec![ChunkEvent::ReasoningToken(reasoning)];
     }
 
     if let Some(content) = delta.content

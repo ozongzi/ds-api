@@ -74,6 +74,7 @@ export function useChat(conversationId: string | null, token: string | null) {
       key,
       role: "assistant",
       content: "",
+      reasoning: "",
       streaming: true,
     };
     setBubbles((prev) => [...prev, bubble]);
@@ -92,6 +93,7 @@ export function useChat(conversationId: string | null, token: string | null) {
           key: uid(),
           role: m.role as "user" | "assistant",
           content: m.content!,
+          reasoning: "",
           streaming: false,
         }));
       setBubbles(history);
@@ -122,6 +124,7 @@ export function useChat(conversationId: string | null, token: string | null) {
       key: uid(),
       role: "user",
       content: text,
+      reasoning: "",
       streaming: false,
     };
     setBubbles((prev) => [...prev, userBubble]);
@@ -148,6 +151,15 @@ export function useChat(conversationId: string | null, token: string | null) {
       sealActiveText();
       updateStatus("idle");
       return true;
+    } else if (event.type === "reasoning_token") {
+      const key = ensureActiveText();
+      setBubbles((prev) =>
+        prev.map((b) =>
+          b.key === key && b.kind === "text"
+            ? { ...b, reasoning: b.reasoning + event.content }
+            : b,
+        ),
+      );
     } else if (event.type === "token") {
       const key = ensureActiveText();
       setBubbles((prev) =>
@@ -336,6 +348,7 @@ export function useChat(conversationId: string | null, token: string | null) {
         key: uid(),
         role: "user",
         content: text,
+        reasoning: "",
         streaming: false,
       };
       setBubbles((prev) => [...prev, userBubble]);

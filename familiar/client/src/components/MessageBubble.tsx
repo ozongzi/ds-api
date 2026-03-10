@@ -1,4 +1,12 @@
-import { memo, useState, useCallback, useEffect, useRef, useMemo } from "react";
+import {
+  memo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+} from "react";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { DiffView } from "./DiffView";
 import { TerminalView } from "./TerminalView";
@@ -26,6 +34,28 @@ function TextChatBubble({
   bubble: Extract<ChatBubble, { kind: "text" }>;
 }) {
   const isUser = bubble.role === "user";
+  const hasReasoning = bubble.reasoning && bubble.reasoning.length > 0;
+
+  // Auto-expand while reasoning is streaming in; collapse once content arrives.
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const prevReasoningLen = useRef(0);
+
+  useLayoutEffect(() => {
+    if (!hasReasoning) return;
+    const len = bubble.reasoning.length;
+    if (len > prevReasoningLen.current) {
+      // New reasoning tokens arrived — ensure open.
+      setReasoningOpen(true);
+    }
+    prevReasoningLen.current = len;
+  }, [bubble.reasoning, hasReasoning]);
+
+  // Collapse reasoning once the main content starts streaming in.
+  useLayoutEffect(() => {
+    if (bubble.content.length > 0 && bubble.streaming) {
+      setReasoningOpen(false);
+    }
+  }, [bubble.content, bubble.streaming]);
 
   return (
     <div
@@ -44,14 +74,43 @@ function TextChatBubble({
           <p className={styles.userText}>{bubble.content}</p>
         ) : (
           <>
-            <MarkdownRenderer content={bubble.content} />
-            {bubble.streaming && bubble.content.length === 0 && (
-              <span className={styles.typingDots} aria-label="正在输入">
-                <span />
-                <span />
-                <span />
-              </span>
+            {hasReasoning && (
+              <div className={styles.reasoningBlock}>
+                <button
+                  className={styles.reasoningToggle}
+                  onClick={() => setReasoningOpen((o) => !o)}
+                  aria-expanded={reasoningOpen}
+                >
+                  <span className={styles.reasoningIcon}>💭</span>
+                  <span className={styles.reasoningLabel}>
+                    {bubble.streaming && bubble.content.length === 0
+                      ? "思考中…"
+                      : "思考过程"}
+                  </span>
+                  <span className={styles.reasoningChevron}>
+                    {reasoningOpen ? "▲" : "▼"}
+                  </span>
+                </button>
+                {reasoningOpen && (
+                  <div className={styles.reasoningContent}>
+                    <MarkdownRenderer content={bubble.reasoning} />
+                    {bubble.streaming && bubble.content.length === 0 && (
+                      <span className={styles.cursor} aria-hidden="true" />
+                    )}
+                  </div>
+                )}
+              </div>
             )}
+            <MarkdownRenderer content={bubble.content} />
+            {bubble.streaming &&
+              bubble.content.length === 0 &&
+              !hasReasoning && (
+                <span className={styles.typingDots} aria-label="正在输入">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              )}
             {bubble.streaming && bubble.content.length > 0 && (
               <span className={styles.cursor} aria-hidden="true" />
             )}
