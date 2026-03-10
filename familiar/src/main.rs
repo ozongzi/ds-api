@@ -42,7 +42,54 @@ async fn main() {
     // ── App state ─────────────────────────────────────────────────────────────
 
     let mcp_tools = state::AppState::init_mcp(&cfg.mcp).await;
-    let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools));
+
+    // Count tool definitions from built-in spells (no MCP).
+    // We build a throw-away agent to measure this rather than hard-coding a number.
+    let builtin_tool_count = {
+        use spells::{
+            A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, ManageMcpSpell,
+            OutlineSpell, PresentFileSpell, ScriptSpell, SearchSpell,
+        };
+        use ds_api::Tool;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+
+        // Placeholder values — we only need raw_tools().len(), not real operation.
+        let dummy_pending = Arc::new(tokio::sync::Mutex::new(None));
+        let dummy_stale = Arc::new(AtomicBool::new(false));
+        let dummy_mcp: Arc<tokio::sync::Mutex<Vec<(String, ds_api::McpTool)>>> =
+            Arc::new(tokio::sync::Mutex::new(vec![]));
+        let dummy_db = db::Db::new(pool.clone());
+        let dummy_embed = embedding::EmbeddingClient::new(
+            cfg.secrets.openrouter_api_key.clone(),
+            cfg.embedding.api_base.clone(),
+            cfg.embedding.model.clone(),
+        );
+        let dummy_conv = uuid::Uuid::nil();
+
+        CommandSpell.raw_tools().len()
+            + FileSpell.raw_tools().len()
+            + ScriptSpell.raw_tools().len()
+            + PresentFileSpell.raw_tools().len()
+            + A2aSpell.raw_tools().len()
+            + SearchSpell.raw_tools().len()
+            + OutlineSpell.raw_tools().len()
+            + AskUserSpell { pending: dummy_pending }.raw_tools().len()
+            + ManageMcpSpell {
+                mcp_tools: dummy_mcp,
+                agent_stale: dummy_stale,
+                builtin_tool_count: 0,
+                max_tools: 0,
+            }.raw_tools().len()
+            + HistorySpell {
+                db: dummy_db,
+                embed: dummy_embed,
+                conversation_id: dummy_conv,
+            }.raw_tools().len()
+    };
+    info!("built-in tool count: {builtin_tool_count}");
+
+    let state = Arc::new(state::AppState::new(&cfg, pool, mcp_tools, builtin_tool_count));
     let web_state = web::AppState(Arc::clone(&state));
 
     // ── Web server ────────────────────────────────────────────────────────────

@@ -1,22 +1,22 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::config::McpServerConfig;
+use crate::config::{Config, McpServerConfig};
 use ds_api::AgentEvent;
 use ds_api::DeepseekAgent;
 use ds_api::McpTool;
+use ds_api::Tool as _;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::config::Config;
 use crate::db::{Db, to_vector};
 use crate::embedding::EmbeddingClient;
 use crate::spells::{
-    A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, OutlineSpell, PresentFileSpell,
-    ScriptSpell, SearchSpell,
+    A2aSpell, AskUserSpell, CommandSpell, FileSpell, HistorySpell, ManageMcpSpell, OutlineSpell,
+    PresentFileSpell, ScriptSpell, SearchSpell,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -62,6 +62,17 @@ pub struct ChatEntry {
     /// Shared slot for the ask_user spell: while the spell is awaiting user input it
     /// stores a oneshot::Sender here; ws.rs extracts and fires it with the user's reply.
     pub ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+
+    /// Set to true by ManageMcpSpell after install/uninstall. The generation
+    /// cleanup will drop the recovered agent instead of restoring it, so the
+    /// next start_generation rebuilds with the updated MCP tool list.
+    pub agent_stale: Arc<AtomicBool>,
+
+    /// Interrupt messages that haven't been consumed by the agent yet.
+    /// Populated by send_interrupt alongside the agent's internal channel.
+    /// Cleared after each ToolResult (the agent drains its channel then).
+    /// Any messages remaining after "done" are processed as a new generation.
+    pub queued_interrupts: Vec<String>,
 }
 
 impl ChatEntry {
@@ -69,6 +80,7 @@ impl ChatEntry {
         agent: DeepseekAgent,
         interrupt_tx: UnboundedSender<String>,
         ask_user_pending: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+        agent_stale: Arc<AtomicBool>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         Self {
@@ -79,6 +91,8 @@ impl ChatEntry {
             generating: false,
             abort_flag: Arc::new(AtomicBool::new(false)),
             ask_user_pending,
+            agent_stale,
+            queued_interrupts: Vec::new(),
         }
     }
 
@@ -127,13 +141,26 @@ pub struct AppState {
     /// Embedding client — shared across all conversations.
     pub embed: EmbeddingClient,
 
-    /// MCP tools initialised once at startup and shared across all agents.
-    /// Each agent gets a cheap clone (all internals are Arc).
-    pub mcp_tools: Vec<McpTool>,
+    /// Named MCP tools — started at startup and updated dynamically by
+    /// ManageMcpSpell. Wrapped in Arc<Mutex> so the spell can add/remove
+    /// entries without going through AppState.
+    pub mcp_tools: Arc<tokio::sync::Mutex<Vec<(String, McpTool)>>>,
+
+    /// Number of raw tool definitions registered by the built-in spells
+    /// (computed once at startup). Used by ManageMcpSpell to enforce max_tools.
+    pub builtin_tool_count: usize,
+
+    /// Maximum total tool definitions (built-in + all MCP). From config.
+    pub max_tools: usize,
 }
 
 impl AppState {
-    pub fn new(cfg: &Config, pool: PgPool, mcp_tools: Vec<McpTool>) -> Self {
+    pub fn new(
+        cfg: &Config,
+        pool: PgPool,
+        mcp_tools: Vec<(String, McpTool)>,
+        builtin_tool_count: usize,
+    ) -> Self {
         let db = Db::new(pool.clone());
         Self {
             chats: Arc::new(Mutex::new(HashMap::new())),
@@ -148,22 +175,24 @@ impl AppState {
                 cfg.embedding.api_base.clone(),
                 cfg.embedding.model.clone(),
             ),
-            mcp_tools,
+            mcp_tools: Arc::new(tokio::sync::Mutex::new(mcp_tools)),
+            builtin_tool_count,
+            max_tools: cfg.limits.max_tools,
         }
     }
 
     /// Initialise MCP servers from config. Called once at startup.
     /// Failures are logged and skipped — a missing MCP server should never
     /// prevent familiar from starting.
-    pub async fn init_mcp(mcp_configs: &[McpServerConfig]) -> Vec<McpTool> {
+    pub async fn init_mcp(mcp_configs: &[McpServerConfig]) -> Vec<(String, McpTool)> {
         let mut tools = Vec::new();
 
         for mc in mcp_configs {
             let args: Vec<&str> = mc.args.iter().map(|s| s.as_str()).collect();
             match McpTool::stdio(&mc.command, &args).await {
                 Ok(t) => {
-                    info!("MCP: {} ready", mc.name);
-                    tools.push(t);
+                    info!("MCP: {} ready ({} tools)", mc.name, t.raw_tools().len());
+                    tools.push((mc.name.clone(), t));
                 }
                 Err(e) => warn!("MCP: {} failed to start: {e}", mc.name),
             }
@@ -173,7 +202,7 @@ impl AppState {
     }
 
     /// Build a fresh agent for `conversation_id`, restoring history from PG.
-    /// Returns the agent, the interrupt sender, and the shared ask_user pending slot.
+    /// Returns `(agent, interrupt_tx, ask_user_pending, agent_stale)`.
     pub async fn build_agent(
         &self,
         conversation_id: Uuid,
@@ -181,6 +210,7 @@ impl AppState {
         DeepseekAgent,
         UnboundedSender<String>,
         Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
+        Arc<AtomicBool>,
     ) {
         let history = match self.db.restore(conversation_id).await {
             Ok(h) => {
@@ -194,6 +224,15 @@ impl AppState {
         };
 
         let ask_user_pending = Arc::new(tokio::sync::Mutex::new(None));
+        let agent_stale = Arc::new(AtomicBool::new(false));
+
+        // Snapshot the MCP tools BEFORE building the agent so the builder
+        // is never in scope across an await point. This keeps the generated
+        // future Send even when the builder or tool types are !Send.
+        let mcp_snapshot: Vec<_> = {
+            let guard = self.mcp_tools.lock().await;
+            guard.iter().cloned().collect()
+        };
 
         let mut builder = DeepseekAgent::custom(
             self.deepseek_token.clone(),
@@ -212,14 +251,20 @@ impl AppState {
         .add_tool(AskUserSpell {
             pending: Arc::clone(&ask_user_pending),
         })
+        .add_tool(ManageMcpSpell {
+            mcp_tools: Arc::clone(&self.mcp_tools),
+            agent_stale: Arc::clone(&agent_stale),
+            builtin_tool_count: self.builtin_tool_count,
+            max_tools: self.max_tools,
+        })
         .add_tool(HistorySpell {
             db: self.db.clone(),
             embed: self.embed.clone(),
             conversation_id,
         });
 
-        for mcp_tool in &self.mcp_tools {
-            builder = builder.add_tool(mcp_tool.clone());
+        for (_, tool) in mcp_snapshot {
+            builder = builder.add_tool(tool);
         }
 
         if let Some(prompt) = &self.system_prompt {
@@ -227,7 +272,7 @@ impl AppState {
         }
 
         let (agent, tx) = builder.with_interrupt_channel();
-        (agent, tx, ask_user_pending)
+        (agent, tx, ask_user_pending, agent_stale)
     }
 
     /// Deliver a user's answer to a waiting `ask_user` spell.
@@ -264,8 +309,8 @@ impl AppState {
         }
 
         // Slow path — build agent outside the lock.
-        let (agent, tx, ask_user_pending) = self.build_agent(conversation_id).await;
-        let entry = ChatEntry::new(agent, tx, ask_user_pending);
+        let (agent, tx, ask_user_pending, agent_stale) = self.build_agent(conversation_id).await;
+        let entry = ChatEntry::new(agent, tx, ask_user_pending, agent_stale);
         let rx = entry.broadcast_tx.subscribe();
         let log = entry.event_log.clone();
         let generating = entry.generating;
@@ -283,7 +328,7 @@ impl AppState {
     /// send the event log replay + subscribe instead of starting a new turn).
     pub async fn start_generation(&self, conversation_id: Uuid, user_text: String) -> bool {
         // Take the agent out of the entry (if idle).
-        let (agent, abort_flag) = {
+        let (agent, abort_flag, agent_stale) = {
             let mut map = self.chats.lock().unwrap();
             let entry = match map.get_mut(&conversation_id) {
                 Some(e) => e,
@@ -296,16 +341,28 @@ impl AppState {
             entry.clear_log();
             entry.abort_flag.store(false, Ordering::Relaxed);
             entry.generating = true;
-            (entry.agent.take(), Arc::clone(&entry.abort_flag))
+            (
+                entry.agent.take(),
+                Arc::clone(&entry.abort_flag),
+                Arc::clone(&entry.agent_stale),
+            )
         };
 
-        let Some(mut agent) = agent else {
-            // Agent missing (shouldn't happen after attach, but be safe).
-            let mut map = self.chats.lock().unwrap();
-            if let Some(entry) = map.get_mut(&conversation_id) {
-                entry.generating = false;
+        let mut agent = match agent {
+            Some(a) => a,
+            None => {
+                // Agent was dropped because MCP tools changed — rebuild outside lock.
+                let (fresh_agent, fresh_tx, fresh_pending, fresh_stale) =
+                    self.build_agent(conversation_id).await;
+                let mut map = self.chats.lock().unwrap();
+                if let Some(entry) = map.get_mut(&conversation_id) {
+                    // Swap in the new interrupt channel and stale flag.
+                    entry.interrupt_tx = fresh_tx;
+                    entry.ask_user_pending = fresh_pending;
+                    entry.agent_stale = Arc::clone(&fresh_stale);
+                }
+                fresh_agent
             }
-            return false;
         };
 
         agent.push_user_message_with_name(&user_text, None);
@@ -313,17 +370,20 @@ impl AppState {
         let state = self.clone();
 
         tokio::spawn(async move {
-            run_generation(state, conversation_id, agent, abort_flag).await;
+            generation_loop(state, conversation_id, agent, abort_flag, agent_stale).await;
         });
 
         true
     }
 
-    /// Inject a message into a running generation via the interrupt channel.
+    /// Inject a message into a running generation via the interrupt channel
+    /// and queue it for post-generation processing in case the agent is on
+    /// its final turn (no pending tool calls to trigger channel draining).
     pub fn send_interrupt(&self, conversation_id: Uuid, content: String) {
-        let map = self.chats.lock().unwrap();
-        if let Some(entry) = map.get(&conversation_id) {
-            let _ = entry.interrupt_tx.send(content);
+        let mut map = self.chats.lock().unwrap();
+        if let Some(entry) = map.get_mut(&conversation_id) {
+            let _ = entry.interrupt_tx.send(content.clone());
+            entry.queued_interrupts.push(content);
         }
     }
 
@@ -384,15 +444,93 @@ impl AppState {
 
 // ── Background generation task ────────────────────────────────────────────────
 
+/// Outer loop that runs `run_generation` and then restarts for any interrupt
+/// that arrived during the agent's final turn (no tool calls to drain it).
+/// By not calling `start_generation` recursively, we avoid a circular Send
+/// constraint between `start_generation` and `run_generation`.
+async fn generation_loop(
+    state: AppState,
+    conversation_id: Uuid,
+    initial_agent: DeepseekAgent,
+    initial_abort: Arc<AtomicBool>,
+    initial_stale: Arc<AtomicBool>,
+) {
+    let mut agent = initial_agent;
+    let mut abort_flag = initial_abort;
+    let mut agent_stale = initial_stale;
+
+    loop {
+        let pending_text =
+            run_generation(state.clone(), conversation_id, agent, abort_flag, agent_stale).await;
+
+        let text = match pending_text {
+            None => break,
+            Some(t) => t,
+        };
+
+        // A message arrived while the agent was on its last turn (no tool
+        // calls, so the interrupt channel was never drained). Prepare the
+        // entry for a new turn and loop back into run_generation.
+        let next = {
+            let mut map = state.chats.lock().unwrap();
+            if let Some(entry) = map.get_mut(&conversation_id) {
+                entry.clear_log();
+                entry.abort_flag.store(false, Ordering::Relaxed);
+                entry.generating = true;
+                let abort = Arc::clone(&entry.abort_flag);
+                let stale = Arc::clone(&entry.agent_stale);
+                Some((entry.agent.take(), abort, stale))
+            } else {
+                None
+            }
+        };
+
+        let (agent_opt, new_abort, mut new_stale) = match next {
+            Some(t) => t,
+            None => break,
+        };
+
+        let next_agent = match agent_opt {
+            Some(a) => a,
+            None => {
+                // Agent was stale; rebuild from history.
+                let (a, tx, pend, s) = state.build_agent(conversation_id).await;
+                {
+                    let mut map = state.chats.lock().unwrap();
+                    if let Some(entry) = map.get_mut(&conversation_id) {
+                        entry.interrupt_tx = tx;
+                        entry.ask_user_pending = pend;
+                        entry.agent_stale = Arc::clone(&s);
+                    }
+                }
+                new_stale = s;
+                a
+            }
+        };
+
+        let mut next_agent = next_agent;
+        next_agent.push_user_message_with_name(&text, None);
+
+        agent = next_agent;
+        abort_flag = new_abort;
+        agent_stale = new_stale;
+    }
+}
+
 /// Drives the agent stream to completion, emitting every event through the
 /// broadcast channel and the event log so any number of WebSocket clients
 /// can subscribe (or catch up after reconnecting).
+///
+/// Returns `Some(text)` if a user interrupt arrived during the final turn and
+/// couldn't be processed inline; the caller (`generation_loop`) starts a new
+/// turn for it.
 async fn run_generation(
     state: AppState,
     conversation_id: Uuid,
     agent: DeepseekAgent,
     abort_flag: Arc<AtomicBool>,
-) {
+    agent_stale: Arc<AtomicBool>,
+) -> Option<String> {
     use ds_api::raw::request::message::{Message as AgentMessage, Role};
     use futures::StreamExt;
     use serde_json::json;
@@ -417,12 +555,16 @@ async fn run_generation(
             if let Some(recovered) = stream.into_agent() {
                 let mut map = state.chats.lock().unwrap();
                 if let Some(entry) = map.get_mut(&conversation_id) {
-                    entry.agent = Some(recovered);
                     entry.generating = false;
                     entry.abort_flag.store(false, Ordering::Relaxed);
+                    // If MCP tools changed, discard the agent so the next turn
+                    // rebuilds it with the updated tool list.
+                    if !agent_stale.load(Ordering::Relaxed) {
+                        entry.agent = Some(recovered);
+                    }
                 }
             }
-            return;
+            return None;
         }
 
         tokio::select! {
@@ -444,12 +586,23 @@ async fn run_generation(
                         "name": c.name,
                         "delta": c.delta,
                     }).to_string(),
-                    Ok(AgentEvent::ToolResult(res)) => json!({
-                        "type": "tool_result",
-                        "id": res.id,
-                        "name": res.name,
-                        "result": res.result,
-                    }).to_string(),
+                    Ok(AgentEvent::ToolResult(res)) => {
+                        // The agent will drain its interrupt channel before the next
+                        // sampling turn. Clear our queue so we don't double-process
+                        // any interrupts that were consumed mid-generation.
+                        {
+                            let mut map = state.chats.lock().unwrap();
+                            if let Some(entry) = map.get_mut(&conversation_id) {
+                                entry.queued_interrupts.clear();
+                            }
+                        }
+                        json!({
+                            "type": "tool_result",
+                            "id": res.id,
+                            "name": res.name,
+                            "result": res.result,
+                        }).to_string()
+                    }
                     Ok(AgentEvent::ReasoningToken(token)) => {
                         json!({"type": "reasoning_token", "content": token}).to_string()
                     }
@@ -467,11 +620,13 @@ async fn run_generation(
                         if let Some(recovered) = stream.into_agent() {
                             let mut map = state.chats.lock().unwrap();
                             if let Some(entry) = map.get_mut(&conversation_id) {
-                                entry.agent = Some(recovered);
                                 entry.generating = false;
+                                if !agent_stale.load(Ordering::Relaxed) {
+                                    entry.agent = Some(recovered);
+                                }
                             }
                         }
-                        return;
+                        return None;
                     }
                 };
 
@@ -498,14 +653,23 @@ async fn run_generation(
     }
 
     // ── Emit done, put agent back ─────────────────────────────────────────────
+    // Returns Some(text) if an interrupt arrived during the final turn (no
+    // tool calls consumed it); generation_loop will start a new turn for it.
     {
         let mut map = state.chats.lock().unwrap();
         if let Some(entry) = map.get_mut(&conversation_id) {
             entry.emit(json!({"type": "done"}).to_string());
             entry.generating = false;
-            if let Some(agent) = recovered {
-                entry.agent = Some(agent);
+            // Only restore the agent if the MCP tool list hasn't changed.
+            if !agent_stale.load(Ordering::Relaxed) {
+                if let Some(agent) = recovered {
+                    entry.agent = Some(agent);
+                }
             }
+            // Drain any queued interrupts that arrived during the final turn.
+            entry.queued_interrupts.drain(..).next()
+        } else {
+            None
         }
     }
 }

@@ -1,5 +1,7 @@
 use ds_api::tool;
+use glob::glob;
 use serde_json::json;
+use tokio::fs;
 
 use super::{MAX_OUTPUT_CHARS, truncate_output};
 
@@ -34,6 +36,60 @@ impl Tool for FileSpell {
                 json!({ "status": "success", "lines_written": line_count })
             }
             Err(e) => json!({ "error": e.to_string() }),
+        }
+    }
+
+    /// 在文件中替换所有匹配的文本片段。
+    /// path: 文件路径, 支持 glob 通配符
+    /// old_str: 要替换的原始文本
+    /// new_str: 替换后的新文本
+    /// dry_run: 是否为模拟运行，不实际修改文件内容。
+    async fn replace_all(
+        &self,
+        path: String,
+        old_str: String,
+        new_str: String,
+        dry_run: bool,
+    ) -> impl Serialize {
+        let mut results = vec![];
+
+        // 解析 glob
+        for entry in glob(&path).expect("Invalid glob pattern") {
+            match entry {
+                Ok(path) => {
+                    if path.is_file() {
+                        // 读取文件
+                        let content = fs::read_to_string(&path).await.unwrap_or_default();
+
+                        // 替换文本
+                        let replaced = content.replace(&old_str, &new_str);
+
+                        // 判断是否有变化
+                        if replaced != content {
+                            if !dry_run {
+                                // 写回文件
+                                if let Err(e) = fs::write(&path, replaced.clone()).await {
+                                    results.push(json!({"file": path.to_string_lossy(), "error": e.to_string()}));
+                                    continue;
+                                }
+                            }
+
+                            // 记录变化
+                            results.push(json!({
+                                "file": path.to_string_lossy(),
+                                "changed": true,
+                                "preview": &replaced[..replaced.len().min(100)] // 只预览前100字符
+                            }));
+                        } else {
+                            results.push(json!({
+                                "file": path.to_string_lossy(),
+                                "changed": false
+                            }));
+                        }
+                    }
+                }
+                Err(e) => results.push(json!({"error": e.to_string()})),
+            }
         }
     }
 

@@ -15,6 +15,7 @@ impl Tool for SearchSpell {
     ///
     /// pattern: 搜索的正则表达式（例如 "fn build_agent" 或 "TODO"）
     /// path: 搜索范围，目录或文件路径（默认为当前目录 "."）
+    /// literal: 是否精确匹配，即不使用正则表达式，默认 false（使用正则）
     /// case_sensitive: 是否大小写敏感，默认 false（忽略大小写）
     /// file_glob: 只搜索匹配此 glob 的文件（例如 "*.rs" 或 "*.{ts,tsx}"），可选
     /// context_lines: 每个匹配前后各显示几行上下文，默认 2，最多 10
@@ -25,6 +26,7 @@ impl Tool for SearchSpell {
         &self,
         pattern: String,
         path: Option<String>,
+        literal: Option<bool>,
         case_sensitive: Option<bool>,
         file_glob: Option<String>,
         context_lines: Option<u32>,
@@ -41,6 +43,9 @@ impl Tool for SearchSpell {
             Some(context_chars.unwrap_or(400).min(2000) as usize);
 
         let mut cmd = Command::new("rg");
+        if literal.unwrap_or(false) {
+            cmd.arg("--fixed-strings");
+        }
         cmd.arg("--json");
         cmd.args(["--context", &context.to_string()]);
 

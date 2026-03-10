@@ -266,8 +266,6 @@ async fn relay_live(
 ) {
     loop {
         tokio::select! {
-            biased;
-
             // ── Incoming broadcast event from the generation task ─────────
             result = live_rx.recv() => {
                 match result {

@@ -16,6 +16,12 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub mcp: Vec<McpServerConfig>,
+    /// Catalogue of MCPs that the agent can install on demand.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub mcp_catalog: Vec<McpCatalogEntry>,
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
 
 /// Sensitive credentials.
@@ -55,6 +61,37 @@ pub struct McpServerConfig {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+}
+
+/// A catalogued MCP server available for on-demand installation by the agent.
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct McpCatalogEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Resource limits applied at runtime.
+#[derive(Debug, Deserialize, Clone)]
+pub struct LimitsConfig {
+    /// Maximum total number of tool definitions the agent may have registered
+    /// (built-in + all MCP tools combined). Defaults to 128.
+    #[serde(default = "default_max_tools")]
+    pub max_tools: usize,
+}
+
+fn default_max_tools() -> usize {
+    128
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self { max_tools: default_max_tools() }
+    }
 }
 
 impl Config {
