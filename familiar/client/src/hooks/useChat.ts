@@ -319,11 +319,15 @@ export function useChat(conversationId: string | null, token: string | null) {
   const send = useCallback(
     (text: string) => {
       if (!conversationId || !token) return;
-      if (
-        statusRef.current === "connecting" ||
-        statusRef.current === "streaming"
-      )
+      if (statusRef.current === "connecting") return;
+
+      // If already streaming, route through the interrupt channel instead of
+      // opening a new WebSocket. This lets messages queue up while deepseek-reasoner
+      // is thinking, to be consumed at the next Idle transition.
+      if (statusRef.current === "streaming") {
+        interrupt(text);
         return;
+      }
 
       // 关闭 reattach 阶段可能留下的静默连接，避免两个 WS 同时追加 token。
       // reattachingRef 标记的是"已建连但 generation 尚未开始"的静默连接；
@@ -417,7 +421,7 @@ export function useChat(conversationId: string | null, token: string | null) {
         }
       });
     },
-    [conversationId, token],
+    [conversationId, token, interrupt],
   );
 
   return {
