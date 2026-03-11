@@ -231,6 +231,12 @@ pub(crate) async fn execute_tools(
     raw_tool_calls: Vec<ToolCall>,
 ) -> (ToolsResult, DeepseekAgent) {
     let mut results = Vec::with_capacity(raw_tool_calls.len());
+    // Buffer any interrupts that arrive during tool execution so they are
+    // appended to history only after the tool-execution pass completes.
+    // This prevents interrupt messages from being injected mid-request and
+    // causing mismatches between tool_call messages and their corresponding
+    // tool results.
+    let mut buffered_interrupts: Vec<String> = Vec::new();
 
     for tc in raw_tool_calls {
         let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
@@ -249,10 +255,12 @@ pub(crate) async fn execute_tools(
                     maybe_msg = rx.recv() => {
                         // An interrupt arrived while the tool was running.
                         if let Some(msg) = maybe_msg {
-                            agent.conversation.history_mut().push(Message::user(&msg));
-                            // Drain any remaining queued interrupts to preserve order.
+                            // Buffer instead of inserting immediately.
+                            buffered_interrupts.push(msg);
+                            // Drain any remaining queued interrupts into the buffer
+                            // to preserve order.
                             while let Ok(more) = rx.try_recv() {
-                                agent.conversation.history_mut().push(Message::user(&more));
+                                buffered_interrupts.push(more);
                             }
                         }
                         // Mark the tool as aborted and stop executing further tools.
@@ -288,11 +296,16 @@ pub(crate) async fn execute_tools(
     }
 
     // Drain any user messages that arrived while tools were executing and
-    // append them to the history so the model sees them on the next turn.
+    // buffer them so they are appended after the tool-execution pass finishes.
     if let Some(rx) = agent.interrupt_rx.as_mut() {
         while let Ok(msg) = rx.try_recv() {
-            agent.conversation.history_mut().push(Message::user(&msg));
+            buffered_interrupts.push(msg);
         }
+    }
+
+    // Append buffered interrupts to the conversation history in order.
+    for msg in buffered_interrupts {
+        agent.conversation.history_mut().push(Message::user(&msg));
     }
 
     (ToolsResult { results }, agent)
