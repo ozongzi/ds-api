@@ -212,12 +212,6 @@ let agent = DeepseekAgent::new(token)
 
 ---
 
-## familiar
-
-This repo includes `familiar`, a full Discord + web chat app built on ds-api. It shows persistent conversation history, multi-tool agents, streaming UI, and MCP integration in a real app. See `familiar/` for details.
-
----
-
 ## Contributing
 
 PRs welcome. Keep changes focused; update public API docs when behaviour changes.
