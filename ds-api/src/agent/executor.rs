@@ -140,7 +140,20 @@ pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
 /// Ownership of the agent is taken so the future can be stored in the state
 /// machine without lifetime complications.
 pub(crate) async fn run_summarize(mut agent: DeepseekAgent) -> DeepseekAgent {
+    let t = std::time::Instant::now();
+    let history_len_before = agent.conversation.history().len();
+    tracing::info!(
+        "[TIMING] run_summarize: starting, history_len={}",
+        history_len_before
+    );
     agent.conversation.maybe_summarize().await;
+    let history_len_after = agent.conversation.history().len();
+    tracing::info!(
+        "[TIMING] run_summarize: completed in {:?}, history_len {} -> {}",
+        t.elapsed(),
+        history_len_before,
+        history_len_after
+    );
     agent
 }
 
@@ -206,7 +219,18 @@ pub(crate) async fn connect_stream(
     DeepseekAgent,
 ) {
     let req = build_request(&agent);
-    match agent.conversation.client.clone().into_stream(req).await {
+    let t = std::time::Instant::now();
+    tracing::info!(
+        "[TIMING] connect_stream: sending HTTP POST to model API (history_len={})",
+        agent.conversation.history().len()
+    );
+    let result = agent.conversation.client.clone().into_stream(req).await;
+    tracing::info!(
+        "[TIMING] connect_stream: HTTP POST completed in {:?}, ok={}",
+        t.elapsed(),
+        result.is_ok()
+    );
+    match result {
         Ok(stream) => (Ok(stream), agent),
         Err(e) => (Err(e), agent),
     }
@@ -238,21 +262,44 @@ pub(crate) async fn execute_tools(
     // tool results.
     let mut buffered_interrupts: Vec<String> = Vec::new();
 
-    for tc in raw_tool_calls {
+    let has_interrupt_rx = agent.interrupt_rx.is_some();
+    tracing::info!(
+        "[TIMING] execute_tools: {} tool call(s), has_interrupt_rx={}",
+        raw_tool_calls.len(),
+        has_interrupt_rx
+    );
+
+    for (tool_idx, tc) in raw_tool_calls.iter().enumerate() {
         let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
 
         // Prepare a result value and an abort flag.
         let mut result = serde_json::json!({ "error": "unknown tool" });
         let mut aborted = false;
 
+        tracing::info!(
+            "[TIMING] execute_tools[{}]: dispatching tool='{}' id='{}'",
+            tool_idx,
+            tc.function.name,
+            tc.id
+        );
+
         if let Some(&idx) = agent.tool_index.get(&tc.function.name) {
             // If we have an interrupt receiver, race the tool call against it.
             if let Some(rx) = agent.interrupt_rx.as_mut() {
+                let t_select = std::time::Instant::now();
+                tracing::info!(
+                    "[TIMING] execute_tools[{}]: entering select! (tool vs interrupt_rx)",
+                    tool_idx
+                );
                 tokio::select! {
                     res = agent.tools[idx].call(&tc.function.name, args.clone()) => {
+                        let elapsed = t_select.elapsed();
+                        tracing::info!("[TIMING] execute_tools[{}]: tool branch won select! in {elapsed:?}", tool_idx);
                         result = res;
                     }
                     maybe_msg = rx.recv() => {
+                        let elapsed = t_select.elapsed();
+                        tracing::info!("[TIMING] execute_tools[{}]: interrupt_rx branch won select! in {elapsed:?}, msg={:?}", tool_idx, maybe_msg.as_deref());
                         // An interrupt arrived while the tool was running.
                         if let Some(msg) = maybe_msg {
                             // Buffer instead of inserting immediately.
@@ -269,12 +316,28 @@ pub(crate) async fn execute_tools(
                     }
                 }
             } else {
-                // No interrupt channel — await tool normally.
+                let t_tool = std::time::Instant::now();
+                tracing::info!(
+                    "[TIMING] execute_tools[{}]: no interrupt_rx, awaiting tool directly",
+                    tool_idx
+                );
                 result = agent.tools[idx].call(&tc.function.name, args.clone()).await;
+                tracing::info!(
+                    "[TIMING] execute_tools[{}]: tool returned in {:?}",
+                    tool_idx,
+                    t_tool.elapsed()
+                );
             }
         } else {
+            tracing::warn!(
+                "[TIMING] execute_tools[{}]: unknown tool name='{}'",
+                tool_idx,
+                tc.function.name
+            );
             result = serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) });
         }
+
+        tracing::info!("[TIMING] execute_tools[{}]: aborted={}", tool_idx, aborted);
 
         agent.conversation.history_mut().push(Message {
             role: Role::Tool,
@@ -284,9 +347,9 @@ pub(crate) async fn execute_tools(
         });
 
         results.push(ToolCallResult {
-            id: tc.id,
-            name: tc.function.name,
-            args: tc.function.arguments,
+            id: tc.id.clone(),
+            name: tc.function.name.clone(),
+            args: tc.function.arguments.clone(),
             result,
         });
 
