@@ -210,6 +210,27 @@ let agent = DeepseekAgent::new(token)
     .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await?);
 ```
 
+--- 
+
+## Tool Bundle
+
+ToolBundle can handle multiple Tool implementations and
+builds a name->index map for dispatch.
+
+### Example
+
+```rust
+let group = ToolBundle::new()
+    .add(FileSpells)
+    .add(SearchSpells)
+    .add(ShellSpells);
+
+let agent = DeepseekAgent::custom(...)
+    .add_tool(group)
+    .add_tool(UiSpells { ... })
+    .add_tool(SpawnSpell { ... });
+```
+
 ---
 
 ## Contributing

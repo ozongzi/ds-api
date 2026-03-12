@@ -1,6 +1,8 @@
 use crate::raw::request::tool::Tool as RawTool;
 use async_trait::async_trait;
 use serde_json::Value;
+use serde_json::json;
+use std::collections::HashMap;
 
 /// The core trait that all agent tools must implement.
 ///
@@ -54,4 +56,42 @@ pub trait Tool: Send + Sync {
     /// structs with `#[derive(Serialize)]`, primitives, etc.) and converts the
     /// value to `serde_json::Value` automatically.
     async fn call(&self, name: &str, args: Value) -> Value;
+}
+
+/// 将多个 Tool 合并为一个，方便批量注册进 agent。
+pub struct ToolBundle {
+    tools: Vec<Box<dyn Tool>>,
+    index: std::collections::HashMap<String, usize>,
+}
+
+impl ToolBundle {
+    pub fn new() -> Self {
+        Self {
+            tools: vec![],
+            index: HashMap::new(),
+        }
+    }
+
+    pub fn add<T: Tool + 'static>(mut self, tool: T) -> Self {
+        let idx = self.tools.len();
+        for raw in tool.raw_tools() {
+            self.index.insert(raw.function.name.clone(), idx);
+        }
+        self.tools.push(Box::new(tool));
+        self
+    }
+}
+
+#[async_trait]
+impl Tool for ToolBundle {
+    fn raw_tools(&self) -> Vec<RawTool> {
+        self.tools.iter().flat_map(|t| t.raw_tools()).collect()
+    }
+
+    async fn call(&self, name: &str, args: Value) -> Value {
+        match self.index.get(name) {
+            Some(&idx) => self.tools[idx].call(name, args).await,
+            None => json!({ "error": format!("未知工具: {name}") }),
+        }
+    }
 }
