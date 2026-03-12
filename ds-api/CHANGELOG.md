@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-03-12
+
+### Summary
+
+Breaking release. `reasoning_content` is no longer stripped from conversation history. Previously it was erased in-place on assistant messages without `tool_calls` at the start of every new turn, permanently destroying it for persistence and display. It is now filtered on the outbound request copy only, so callers can rely on history being immutable.
+
+### Breaking changes
+
+**`reasoning_content` preservation semantics changed**
+
+In `0.7.x`, calling `agent.chat(...)` or `agent.chat_from_history(...)` had the side effect of mutating conversation history: `reasoning_content` was silently stripped from any assistant message that lacked `tool_calls`. This meant that after the first new turn, `agent.history()` no longer contained any reasoning content, and any downstream serialization (e.g. writing history back to a database) would permanently lose it.
+
+In `0.8.0`, history is never mutated for this purpose. The outbound `messages` array sent to the API is filtered instead, according to deepseek-reasoner's rules:
+
+1. Assistant messages **with** `tool_calls` **keep** their `reasoning_content` — the model needs it to continue reasoning after seeing tool results.
+2. Among those, only the **last** such message keeps its `reasoning_content`; earlier ones are stripped to reduce prompt size.
+3. Assistant messages **without** `tool_calls` always have `reasoning_content` omitted from the request (sending it there causes a 400 error on the next tool-calling turn).
+
+**Migration:** if your code reads `agent.history()` after a turn and expects `reasoning_content` to have been cleared, it will now still be present. Filter it yourself at read time if needed. No changes are required if you were simply displaying or persisting history — this release is strictly better for those use cases.
+
+### Bug fixes
+
+**`reasoning_content` no longer lost after the first new turn**
+
+`DeepseekAgent::drain_interrupts` previously mutated `conversation.history_mut()` to erase `reasoning_content` from assistant messages without `tool_calls`. This permanently destroyed the data before it could be serialized or displayed. The mutation has been removed; filtering now happens in `build_request` on a cloned message list.
+
+---
+
 ## [0.6.0] - 2026-03-10
 
 ### Summary

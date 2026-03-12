@@ -19,7 +19,7 @@ export DEEPSEEK_API_KEY="sk-..."
 ```toml
 # Cargo.toml
 [dependencies]
-ds-api  = "0.6.0"
+ds-api  = "0.8.0"
 futures = "0.3"
 tokio   = { version = "1", features = ["full"] }
 serde   = { version = "1", features = ["derive"] }

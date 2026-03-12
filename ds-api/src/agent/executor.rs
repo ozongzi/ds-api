@@ -120,10 +120,58 @@ pub(crate) type SummarizeFuture =
 /// If the agent has at least one tool registered, `tool_choice` is set to `auto`
 /// so the model can freely decide whether to call a tool.
 pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
-    let history = agent.conversation.history().to_vec();
+    // deepseek-reasoner rules for reasoning_content in history:
+    //
+    //  1. An assistant message with tool_calls MUST include reasoning_content
+    //     (the model needs it to continue reasoning after seeing tool results).
+    //  2. An assistant message without tool_calls MUST NOT include
+    //     reasoning_content (sending it causes a 400 on the next tool-calling
+    //     turn: "Missing reasoning_content").
+    //  3. Among messages that do have tool_calls, only the last one's
+    //     reasoning_content should be kept; earlier ones can be stripped to
+    //     reduce prompt size.
+    //
+    // We apply this filter here — on the copy sent to the API — rather than
+    // mutating the stored history, so the original reasoning content is
+    // preserved in the conversation for persistence / display.
+    let history = agent.conversation.history();
+
+    // Find the index of the last assistant message that has tool_calls.
+    let last_tool_call_idx = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            matches!(m.role, Role::Assistant)
+                && m.tool_calls
+                    .as_ref()
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+        })
+        .map(|(i, _)| i)
+        .last();
+
+    let messages: Vec<Message> = history
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if m.reasoning_content.is_none() {
+                return m.clone();
+            }
+            let keep = last_tool_call_idx == Some(i);
+            if keep {
+                m.clone()
+            } else {
+                Message {
+                    reasoning_content: None,
+                    ..m.clone()
+                }
+            }
+        })
+        .collect();
+
     let mut req = ApiRequest::builder()
         .with_model(agent.model.clone())
-        .messages(history);
+        .messages(messages);
     for tool in &agent.tools {
         for raw in tool.raw_tools() {
             req = req.add_tool(raw);
@@ -140,20 +188,7 @@ pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
 /// Ownership of the agent is taken so the future can be stored in the state
 /// machine without lifetime complications.
 pub(crate) async fn run_summarize(mut agent: DeepseekAgent) -> DeepseekAgent {
-    let t = std::time::Instant::now();
-    let history_len_before = agent.conversation.history().len();
-    tracing::info!(
-        "[TIMING] run_summarize: starting, history_len={}",
-        history_len_before
-    );
     agent.conversation.maybe_summarize().await;
-    let history_len_after = agent.conversation.history().len();
-    tracing::info!(
-        "[TIMING] run_summarize: completed in {:?}, history_len {} -> {}",
-        t.elapsed(),
-        history_len_before,
-        history_len_after
-    );
     agent
 }
 
@@ -219,18 +254,7 @@ pub(crate) async fn connect_stream(
     DeepseekAgent,
 ) {
     let req = build_request(&agent);
-    let t = std::time::Instant::now();
-    tracing::info!(
-        "[TIMING] connect_stream: sending HTTP POST to model API (history_len={})",
-        agent.conversation.history().len()
-    );
-    let result = agent.conversation.client.clone().into_stream(req).await;
-    tracing::info!(
-        "[TIMING] connect_stream: HTTP POST completed in {:?}, ok={}",
-        t.elapsed(),
-        result.is_ok()
-    );
-    match result {
+    match agent.conversation.client.clone().into_stream(req).await {
         Ok(stream) => (Ok(stream), agent),
         Err(e) => (Err(e), agent),
     }
@@ -262,44 +286,21 @@ pub(crate) async fn execute_tools(
     // tool results.
     let mut buffered_interrupts: Vec<String> = Vec::new();
 
-    let has_interrupt_rx = agent.interrupt_rx.is_some();
-    tracing::info!(
-        "[TIMING] execute_tools: {} tool call(s), has_interrupt_rx={}",
-        raw_tool_calls.len(),
-        has_interrupt_rx
-    );
-
-    for (tool_idx, tc) in raw_tool_calls.iter().enumerate() {
+    for tc in raw_tool_calls {
         let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
 
         // Prepare a result value and an abort flag.
         let mut result = serde_json::json!({ "error": "unknown tool" });
         let mut aborted = false;
 
-        tracing::info!(
-            "[TIMING] execute_tools[{}]: dispatching tool='{}' id='{}'",
-            tool_idx,
-            tc.function.name,
-            tc.id
-        );
-
         if let Some(&idx) = agent.tool_index.get(&tc.function.name) {
             // If we have an interrupt receiver, race the tool call against it.
             if let Some(rx) = agent.interrupt_rx.as_mut() {
-                let t_select = std::time::Instant::now();
-                tracing::info!(
-                    "[TIMING] execute_tools[{}]: entering select! (tool vs interrupt_rx)",
-                    tool_idx
-                );
                 tokio::select! {
                     res = agent.tools[idx].call(&tc.function.name, args.clone()) => {
-                        let elapsed = t_select.elapsed();
-                        tracing::info!("[TIMING] execute_tools[{}]: tool branch won select! in {elapsed:?}", tool_idx);
                         result = res;
                     }
                     maybe_msg = rx.recv() => {
-                        let elapsed = t_select.elapsed();
-                        tracing::info!("[TIMING] execute_tools[{}]: interrupt_rx branch won select! in {elapsed:?}, msg={:?}", tool_idx, maybe_msg.as_deref());
                         // An interrupt arrived while the tool was running.
                         if let Some(msg) = maybe_msg {
                             // Buffer instead of inserting immediately.
@@ -316,28 +317,12 @@ pub(crate) async fn execute_tools(
                     }
                 }
             } else {
-                let t_tool = std::time::Instant::now();
-                tracing::info!(
-                    "[TIMING] execute_tools[{}]: no interrupt_rx, awaiting tool directly",
-                    tool_idx
-                );
+                // No interrupt channel — await tool normally.
                 result = agent.tools[idx].call(&tc.function.name, args.clone()).await;
-                tracing::info!(
-                    "[TIMING] execute_tools[{}]: tool returned in {:?}",
-                    tool_idx,
-                    t_tool.elapsed()
-                );
             }
         } else {
-            tracing::warn!(
-                "[TIMING] execute_tools[{}]: unknown tool name='{}'",
-                tool_idx,
-                tc.function.name
-            );
             result = serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) });
         }
-
-        tracing::info!("[TIMING] execute_tools[{}]: aborted={}", tool_idx, aborted);
 
         agent.conversation.history_mut().push(Message {
             role: Role::Tool,
@@ -347,9 +332,9 @@ pub(crate) async fn execute_tools(
         });
 
         results.push(ToolCallResult {
-            id: tc.id.clone(),
-            name: tc.function.name.clone(),
-            args: tc.function.arguments.clone(),
+            id: tc.id,
+            name: tc.function.name,
+            args: tc.function.arguments,
             result,
         });
 

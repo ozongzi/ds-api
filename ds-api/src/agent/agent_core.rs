@@ -293,26 +293,6 @@ impl DeepseekAgent {
     /// `Idle` transition so that injected messages are visible before each API
     /// turn, not just after tool-execution rounds.
     pub(crate) fn drain_interrupts(&mut self) {
-        // Strip reasoning_content from assistant messages that do NOT have
-        // tool_calls.  deepseek-reasoner requires reasoning_content to be
-        // present on every assistant message that *does* have tool_calls
-        // (it must be round-tripped within the same Turn so the model can
-        // continue reasoning after seeing the tool result).  However, for
-        // plain assistant messages (final replies with no tool_calls),
-        // reasoning_content must be omitted when starting a new Turn —
-        // sending it there causes a 400 "Missing reasoning_content" error
-        // on the *next* tool-calling assistant message in history.
-        for msg in self.conversation.history_mut().iter_mut() {
-            let has_tool_calls = msg
-                .tool_calls
-                .as_ref()
-                .map(|v| !v.is_empty())
-                .unwrap_or(false);
-            if !has_tool_calls {
-                msg.reasoning_content = None;
-            }
-        }
-
         if let Some(rx) = self.interrupt_rx.as_mut() {
             while let Ok(msg) = rx.try_recv() {
                 self.conversation
