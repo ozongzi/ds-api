@@ -18,6 +18,7 @@ pub struct ToolCallChunk {
     pub id: String,
     pub name: String,
     pub delta: String,
+    pub index: u32,
 }
 
 /// The result of a completed tool invocation.

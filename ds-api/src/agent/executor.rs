@@ -80,6 +80,7 @@ pub(crate) enum ChunkEvent {
         id: String,
         name: String,
         delta: String,
+        index: u32,
     },
 }
 
@@ -448,6 +449,7 @@ pub(crate) fn apply_chunk_delta(
                     id: id.clone(),
                     name: name.clone(),
                     delta: String::new(),
+                    index: idx as u32,
                 });
                 *entry = Some(PartialToolCall {
                     id,
@@ -470,6 +472,7 @@ pub(crate) fn apply_chunk_delta(
                         id: partial.id.clone(),
                         name: partial.name.clone(),
                         delta: args,
+                        index: idx as u32,
                     });
                 }
             }

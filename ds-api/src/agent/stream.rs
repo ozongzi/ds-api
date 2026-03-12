@@ -167,9 +167,17 @@ impl Stream for AgentStream {
                             return Poll::Ready(Some(Ok(match ev {
                                 ChunkEvent::Token(t) => AgentEvent::Token(t),
                                 ChunkEvent::ReasoningToken(t) => AgentEvent::ReasoningToken(t),
-                                ChunkEvent::ToolCallChunk { id, name, delta } => {
-                                    AgentEvent::ToolCall(ToolCallChunk { id, name, delta })
-                                }
+                                ChunkEvent::ToolCallChunk {
+                                    id,
+                                    name,
+                                    delta,
+                                    index,
+                                } => AgentEvent::ToolCall(ToolCallChunk {
+                                    id,
+                                    name,
+                                    delta,
+                                    index,
+                                }),
                             })));
                         }
                         continue;
@@ -298,6 +306,7 @@ impl Stream for AgentStream {
                             id: tc.id.clone(),
                             name: tc.function.name.clone(),
                             delta: tc.function.arguments.clone(),
+                            index: 0,
                         }))));
                     }
                     // All events yielded (or streaming — already emitted as chunks).
