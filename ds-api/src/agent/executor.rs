@@ -180,6 +180,13 @@ pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
     if !agent.tools.is_empty() {
         req = req.tool_choice_auto();
     }
+
+    // Merge any extra_body fields stored on the agent into the ApiRequest.
+    // Clone because `agent` is borrowed immutably here.
+    if let Some(ref map) = agent.extra_body {
+        req = req.extra_body(map.clone());
+    }
+
     req
 }
 

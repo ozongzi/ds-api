@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use super::{
     message::Message, model::Model, response_format::ResponseFormat, stop::Stop,
@@ -102,6 +103,65 @@ pub struct ChatCompletionRequest {
     /// When specifying this parameter, `logprobs` must be true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_logprobs: Option<u32>,
+
+    /// Extra arbitrary JSON body fields. When set, these key/value pairs are merged
+    /// into the top-level request JSON. Use this to pass provider-specific or
+    /// custom fields not yet modeled by the library.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<Map<String, Value>>,
+}
+
+impl ChatCompletionRequest {
+    /// Add a single extra top-level field to the request body (in-place).
+    ///
+    /// This merges the given `key` / `value` pair into the request's
+    /// `extra_body` map, creating that map if necessary. Values placed into
+    /// `extra_body` are serialized into the top-level JSON of the request
+    /// due to `#[serde(flatten)]`, so they appear as peers to fields such as
+    /// `messages` and `model`.
+    ///
+    /// Notes:
+    /// - Do not add keys that intentionally collide with existing top-level
+    ///   fields (for example `messages` or `model`) unless you explicitly want
+    ///   to override them — such collisions are not recommended.
+    /// - Use this in-place helper when you have a mutable `ChatCompletionRequest`
+    ///   instance and want to add a field without consuming the value.
+    ///
+    /// Example:
+    /// ```
+    /// # use ds_api::raw::request::ChatCompletionRequest;
+    /// # use serde_json::json;
+    /// let mut req = ChatCompletionRequest::default();
+    /// req.add_extra_field("provider_opt", json!("x"));
+    /// ```
+    pub fn add_extra_field(&mut self, key: impl Into<String>, value: Value) {
+        if let Some(ref mut m) = self.extra_body {
+            m.insert(key.into(), value);
+        } else {
+            let mut m = Map::new();
+            m.insert(key.into(), value);
+            self.extra_body = Some(m);
+        }
+    }
+
+    /// Builder-style helper to add a single extra field and return the owned
+    /// request for chaining.
+    ///
+    /// This is a convenience that consumes (takes ownership of) `self`, adds
+    /// the given key/value pair to `extra_body`, and returns the modified
+    /// `ChatCompletionRequest` so you can continue chaining builder calls.
+    ///
+    /// Example:
+    /// ```
+    /// # use ds_api::raw::request::ChatCompletionRequest;
+    /// # use serde_json::json;
+    /// let req = ChatCompletionRequest::default()
+    ///     .with_extra_field("provider_opt", json!("x"));
+    /// ```
+    pub fn with_extra_field(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.add_extra_field(key, value);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +196,7 @@ mod tests {
             tool_choice: None,
             logprobs: None,
             top_logprobs: None,
+            extra_body: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -173,5 +234,33 @@ mod tests {
         assert!(request.tool_choice.is_none());
         assert!(request.logprobs.is_none());
         assert!(request.top_logprobs.is_none());
+        assert!(request.extra_body.is_none());
+    }
+
+    #[test]
+    fn test_extra_body_serialize_merge() {
+        use crate::raw::model::Model;
+        use serde_json::{Map, Value, json};
+
+        // Build an extra map
+        let mut extra = Map::<String, Value>::new();
+        extra.insert("x_custom".to_string(), json!("v1"));
+        extra.insert("x_flag".to_string(), json!(true));
+
+        // Create a request with extra_body set
+        let req = ChatCompletionRequest {
+            messages: vec![],
+            model: Model::DeepseekChat,
+            extra_body: Some(extra),
+            ..Default::default()
+        };
+
+        // Serialize to a Value and assert the custom keys are present at top-level
+        let v = serde_json::to_value(&req).expect("serialize");
+        assert_eq!(
+            v.get("x_custom").and_then(|val| val.as_str()).unwrap(),
+            "v1"
+        );
+        assert_eq!(v.get("x_flag").and_then(|val| val.as_bool()).unwrap(), true);
     }
 }

@@ -95,6 +95,10 @@ pub struct DeepseekAgent {
     /// appended to the conversation history as `Role::User` messages before the
     /// next API turn begins.
     pub(crate) interrupt_rx: Option<mpsc::UnboundedReceiver<String>>,
+    /// Optional map of extra top-level JSON fields to merge into the API request body.
+    /// This is used by the builder helpers below to attach custom provider-specific
+    /// fields that the typed request doesn't yet expose.
+    pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl DeepseekAgent {
@@ -108,6 +112,7 @@ impl DeepseekAgent {
             streaming: false,
             model,
             interrupt_rx: None,
+            extra_body: None,
         }
     }
 
@@ -171,6 +176,36 @@ impl DeepseekAgent {
     /// Enable SSE streaming for each API turn (builder-style).
     pub fn with_streaming(mut self) -> Self {
         self.streaming = true;
+        self
+    }
+
+    /// Merge arbitrary top-level JSON key/value pairs into the request body for
+    /// the next API turn. The pairs are stored on the agent and later merged
+    /// into the `ApiRequest` raw body when a request is built.
+    ///
+    /// Example:
+    /// let mut map = serde_json::Map::new();
+    /// map.insert(\"foo\".to_string(), serde_json::json!(\"bar\"));
+    /// let agent = DeepseekAgent::new(\"sk-...\").extra_body(map);
+    pub fn extra_body(mut self, map: serde_json::Map<String, serde_json::Value>) -> Self {
+        if let Some(ref mut existing) = self.extra_body {
+            existing.extend(map);
+        } else {
+            self.extra_body = Some(map);
+        }
+        self
+    }
+
+    /// Add a single extra top-level field to be merged into the request body.
+    /// Convenience helper to avoid constructing a full map.
+    pub fn extra_field(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        if let Some(ref mut m) = self.extra_body {
+            m.insert(key.into(), value);
+        } else {
+            let mut m = serde_json::Map::new();
+            m.insert(key.into(), value);
+            self.extra_body = Some(m);
+        }
         self
     }
 

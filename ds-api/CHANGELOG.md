@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-03-12
+
+### New features
+
+- Added `extra_body` support to the request types: `ChatCompletionRequest` now includes an `extra_body: Option<Map<String, Value>>` field that is annotated with `#[serde(flatten)]`. When present, these key/value pairs are merged into the top-level JSON request body so callers can pass provider-specific or experimental fields not yet modelled by the typed request.
+
+- Added fine-grained helper APIs for adding single fields:
+  - `ChatCompletionRequest::add_extra_field(&mut self, key, value)` — in-place insertion.
+  - `ChatCompletionRequest::with_extra_field(self, key, value) -> Self` — builder-style chaining.
+  - `ApiRequest::add_extra_field(&mut self, key, value) -> &mut Self` — in-place builder mutation.
+  - `ApiRequest::with_extra_field(self, key, value) -> Self` — consuming builder-style helper.
+  - `ApiRequest::extra_field(...)` preserved as a compatibility alias.
+
+- `DeepseekAgent` builder helpers:
+  - `DeepseekAgent::extra_body(map)` and `DeepseekAgent::extra_field(key, value)` — store extra top-level fields on the agent which are merged into the `ApiRequest` produced by `build_request`. This provides a convenient way to attach provider-specific options at the agent level.
+
+### Tests
+
+- Added unit test `test_extra_body_serialize_merge` verifying that `extra_body` entries are flattened into the top-level JSON when a `ChatCompletionRequest` is serialized.
+
+### Documentation
+
+- README updated with a new "Custom top-level request fields (extra_body)" section that documents usage patterns for `ApiRequest::extra_body`, `ApiRequest::with_extra_field`, and the `DeepseekAgent` helpers, including examples and notes about key collision risks.
+
+### Notes
+
+- `extra_body` fields are flattened into the top-level request JSON via `serde(flatten)` and therefore should avoid colliding with existing top-level field names such as `messages` or `model`.
+- `DeepseekAgent`-held `extra_body` is persisted on the agent instance until changed or cleared explicitly (it is not automatically cleared after a single request). If you want a one-shot semantics, call `ApiRequest` helpers directly for per-request control.
+
 ## [0.8.0] - 2026-03-12
 
 ### Summary

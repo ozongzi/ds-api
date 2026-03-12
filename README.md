@@ -154,6 +154,110 @@ let agent = DeepseekAgent::new(token)
     .with_model("deepseek-reasoner");
 ```
 
+## Custom top-level request fields (`extra_body`)
+
+The library exposes an `extra_body` mechanism to let you merge arbitrary top-level JSON fields into the HTTP request body sent to the provider. This is useful for passing provider-specific or experimental options that are not (yet) modelled by the typed request structure.
+
+There are two primary places you can attach `extra_body` fields:
+
+- On an `ApiRequest` (fine-grained, request-local)
+- On a `DeepseekAgent` (convenient builder-style; merged into the next requests built from the agent)
+
+Important notes
+- Fields in `extra_body` are flattened into the top-level JSON via `serde(flatten)`, so they appear as peers to `messages`, `model`, etc.
+- Avoid key collisions with existing top-level names (e.g. `messages`, `model`). The intended usage is adding provider-specific keys.
+- Agent-held `extra_body` maps are merged into the `ApiRequest` when the request is built. (If you want per-request control prefer `ApiRequest::extra_body`.)
+
+Examples
+
+- Using `ApiRequest`:
+
+```rust
+use serde_json::{Map, json};
+use ds_api::ApiRequest;
+
+let mut m = Map::new();
+m.insert("my_flag".to_string(), json!(true));
+
+let req = ApiRequest::builder()
+    .messages(vec![])
+    .extra_body(m);
+
+// send via ApiClient, or use within library internals that accept ApiRequest
+```
+
+- Using `DeepseekAgent` builder helpers:
+
+```rust
+use serde_json::{Map, json};
+use ds_api::DeepseekAgent;
+
+let mut m = Map::new();
+m.insert("provider_option".to_string(), json!("value"));
+
+let agent = DeepseekAgent::new(token)
+    .extra_body(m)              // merge these fields into subsequent requests
+    .chat("Hello world");
+```
+
+- Convenience single-field helper:
+
+```rust
+let agent = DeepseekAgent::new(token)
+    .extra_field("provider_option", serde_json::json!("value"));
+```
+
+Adding a unit test (suggested)
+To verify serialization behaviour you can add a unit test that constructs a `ChatCompletionRequest` with `extra_body` and confirms the resulting top-level JSON contains the custom keys. Example test you can add to `ds-api/src/raw/request/chat_completion.rs` (or place in an integration test under `ds-api/tests/`):
+
+```rust
+#[test]
+fn test_extra_body_serialize_merge() {
+    use ds_api::raw::request::ChatCompletionRequest;
+    use ds_api::raw::model::Model;
+    use serde_json::{json, Map, Value};
+
+    // Build an extra map
+    let mut extra = Map::<String, Value>::new();
+    extra.insert("x_custom".to_string(), json!("v1"));
+    extra.insert("x_flag".to_string(), json!(true));
+
+    // Create a request with extra_body set
+    let req = ChatCompletionRequest {
+        messages: vec![],
+        model: Model::DeepseekChat,
+        extra_body: Some(extra),
+        ..Default::default()
+    };
+
+    // Serialize to a Value and assert the custom keys are present at top-level
+    let s = serde_json::to_value(&req).expect("serialize");
+    assert_eq!(s.get("x_custom").and_then(|v| v.as_str()).unwrap(), "v1");
+    assert_eq!(s.get("x_flag").and_then(|v| v.as_bool()).unwrap(), true);
+}
+```
+
+Run tests:
+- From repository root run `cargo test -p ds-api` to run the crate's tests (or `cargo test` for workspace-wide).
+
+This README section documents the intended `extra_body` usage and supplies a test template you can drop into the codebase to assert the top-level merging behaviour.
+
+
+Any OpenAI-compatible endpoint works:
+
+```rust
+// OpenRouter
+let agent = DeepseekAgent::custom(
+    "sk-or-...",
+    "https://openrouter.ai/api/v1",
+    "meta-llama/llama-3.3-70b-instruct:free",
+);
+
+// deepseek-reasoner (think before responding)
+let agent = DeepseekAgent::new(token)
+    .with_model("deepseek-reasoner");
+```
+
 ---
 
 ## Injecting messages mid-run
