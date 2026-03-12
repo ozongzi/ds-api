@@ -6,3 +6,4 @@ rpg_stage/
 **/node_modules/
 **/dist/
 **/CLAUDE.md
+.DS_Store

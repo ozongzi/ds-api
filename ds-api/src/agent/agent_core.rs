@@ -214,7 +214,8 @@ impl DeepseekAgent {
     /// System messages added this way are never removed by the built-in summarizers.
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.conversation
-            .add_message(Message::new(Role::System, &prompt.into()));
+            .history_mut()
+            .insert(0, Message::new(Role::System, &prompt.into()));
         self
     }
 
