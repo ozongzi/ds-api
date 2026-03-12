@@ -155,6 +155,7 @@ pub use conversation::{Conversation, LlmSummarizer, SlidingWindowSummarizer};
 pub use error::ApiError;
 
 pub use tool_trait::Tool;
+pub use tool_trait::ToolBundle;
 
 pub use ds_api_macros::tool;
 
