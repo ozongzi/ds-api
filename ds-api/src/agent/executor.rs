@@ -137,31 +137,27 @@ pub(crate) fn build_request(agent: &DeepseekAgent) -> ApiRequest {
     // preserved in the conversation for persistence / display.
     let history = agent.conversation.history();
 
-    // Find the index of the last assistant message that has tool_calls.
-    let last_tool_call_idx = history
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| {
-            matches!(m.role, Role::Assistant)
-                && m.tool_calls
-                    .as_ref()
-                    .map(|v| !v.is_empty())
-                    .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .last();
-
+    // DeepSeek Reasoner rules:
+    //  - assistant message WITH tool_calls  → reasoning_content must be present
+    //  - assistant message WITHOUT tool_calls → reasoning_content must be absent
+    // We preserve the real reasoning when available, and only strip/fill as needed.
     let messages: Vec<Message> = history
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            if m.reasoning_content.is_none() {
+        .map(|m| {
+            if !matches!(m.role, Role::Assistant) {
                 return m.clone();
             }
-            let keep = last_tool_call_idx == Some(i);
-            if keep {
-                m.clone()
+            let has_tool_calls = m.tool_calls.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+            if has_tool_calls {
+                // Must have reasoning_content; keep real value or fall back to empty string.
+                Message {
+                    reasoning_content: Some(
+                        m.reasoning_content.clone().unwrap_or_default()
+                    ),
+                    ..m.clone()
+                }
             } else {
+                // Must NOT have reasoning_content.
                 Message {
                     reasoning_content: None,
                     ..m.clone()

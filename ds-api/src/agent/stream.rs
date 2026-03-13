@@ -160,9 +160,19 @@ impl Stream for AgentStream {
                     Poll::Ready(Some(Ok(chunk))) => {
                         let mut events = apply_chunk_delta(&mut data, chunk);
                         this.state = AgentStreamState::StreamingChunks(data);
-                        // Drain the first event (if any); remaining are lost only
-                        // if multiple fire per chunk, which never happens in practice.
+                        // Queue all events; drain them one per poll via pending_events.
                         if !events.is_empty() {
+                            // Push tail events into the pending queue (they will be
+                            // returned on subsequent poll_next calls before we poll
+                            // the underlying stream again).
+                            for extra in events.drain(1..) {
+                                this.pending_events.push_back(match extra {
+                                    ChunkEvent::Token(t) => AgentEvent::Token(t),
+                                    ChunkEvent::ReasoningToken(t) => AgentEvent::ReasoningToken(t),
+                                    ChunkEvent::ToolCallChunk { id, name, delta, index } =>
+                                        AgentEvent::ToolCall(ToolCallChunk { id, name, delta, index }),
+                                });
+                            }
                             let ev = events.swap_remove(0);
                             return Poll::Ready(Some(Ok(match ev {
                                 ChunkEvent::Token(t) => AgentEvent::Token(t),
