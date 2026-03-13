@@ -249,7 +249,7 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #tool_name => {
                 #(#arg_parses)*
-                let __result = { #body };
+                let __result = (async move || { #body })().await;
                 match serde_json::to_value(__result) {
                     Ok(v) => v,
                     Err(e) => serde_json::json!({ "error": format!("serialization error: {}", e) }),

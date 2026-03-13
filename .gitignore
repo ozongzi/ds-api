@@ -7,3 +7,4 @@ rpg_stage/
 **/dist/
 **/CLAUDE.md
 .DS_Store
+.idea
