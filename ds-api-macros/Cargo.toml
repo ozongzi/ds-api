@@ -5,7 +5,6 @@ edition = "2024"
 description = "Procedural macros for ds-api (provides the `tool` macro and related helpers)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ozongzi/ds-api"
-readme = "../ds-api/README.md"
 authors = ["ozongzi <ozongzi@icloud.com>"]
 
 [lib]

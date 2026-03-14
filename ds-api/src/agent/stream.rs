@@ -228,6 +228,7 @@ impl Stream for AgentStream {
                 AgentStreamState::Idle => {
                     let agent = this.agent.as_mut().expect("agent missing in Idle state");
                     agent.drain_interrupts();
+                    agent.drain_tool_injections();
                     let agent = this.agent.take().unwrap();
                     this.state = AgentStreamState::Summarizing(Box::pin(run_summarize(agent)));
                 }

@@ -100,6 +100,19 @@ pub struct DeepseekAgent {
     /// This is used by the builder helpers below to attach custom provider-specific
     /// fields that the typed request doesn't yet expose.
     pub(crate) extra_body: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Optional channel for injecting or removing tools at runtime.
+    /// Messages received here are drained at every `Idle` transition,
+    /// before the next API turn begins — same timing as `interrupt_rx`.
+    pub(crate) tool_inject_rx: Option<mpsc::UnboundedReceiver<ToolInjection>>,
+}
+
+/// A runtime tool-injection command sent through the channel created by
+/// [`DeepseekAgent::with_tool_inject_channel`].
+pub enum ToolInjection {
+    /// Add a new tool to the running agent.
+    Add(Box<dyn Tool>),
+    /// Remove all tools whose `raw_tools()` names are in the given set.
+    Remove(Vec<String>),
 }
 
 impl DeepseekAgent {
@@ -114,6 +127,7 @@ impl DeepseekAgent {
             model,
             interrupt_rx: None,
             extra_body: None,
+            tool_inject_rx: None,
         }
     }
 
@@ -337,5 +351,59 @@ impl DeepseekAgent {
                     .push(Message::new(Role::User, &msg));
             }
         }
+    }
+
+    /// Drain any pending [`ToolInjection`]s from the channel and apply them.
+    ///
+    /// Called by the state machine at every `Idle` transition, right after
+    /// `drain_interrupts`, so added/removed tools take effect before the next
+    /// API turn.
+    pub(crate) fn drain_tool_injections(&mut self) {
+        if let Some(rx) = self.tool_inject_rx.as_mut() {
+            while let Ok(injection) = rx.try_recv() {
+                match injection {
+                    ToolInjection::Add(tool) => {
+                        let idx = self.tools.len();
+                        for raw in tool.raw_tools() {
+                            self.tool_index.insert(raw.function.name.clone(), idx);
+                        }
+                        self.tools.push(tool);
+                    }
+                    ToolInjection::Remove(names) => {
+                        let names_set: std::collections::HashSet<&str> =
+                            names.iter().map(String::as_str).collect();
+                        let mut new_tools: Vec<Box<dyn Tool>> = Vec::new();
+                        let mut new_index: HashMap<String, usize> = HashMap::new();
+                        for tool in self.tools.drain(..) {
+                            let raws = tool.raw_tools();
+                            if raws.iter().any(|r| names_set.contains(r.function.name.as_str())) {
+                                continue;
+                            }
+                            let idx = new_tools.len();
+                            for raw in raws {
+                                new_index.insert(raw.function.name.clone(), idx);
+                            }
+                            new_tools.push(tool);
+                        }
+                        self.tools = new_tools;
+                        self.tool_index = new_index;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Attach a tool-injection channel to the agent (builder-style).
+    ///
+    /// Returns the agent and the sender half.  Send [`ToolInjection::Add`] or
+    /// [`ToolInjection::Remove`] at any time; changes are applied at the next
+    /// `Idle` transition (i.e. before the API turn that follows the current
+    /// tool-execution round).
+    pub fn with_tool_inject_channel(
+        mut self,
+    ) -> (Self, mpsc::UnboundedSender<ToolInjection>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.tool_inject_rx = Some(rx);
+        (self, tx)
     }
 }

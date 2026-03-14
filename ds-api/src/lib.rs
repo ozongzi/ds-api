@@ -149,7 +149,7 @@ pub mod mcp;
 pub mod raw; // raw types remain accessible via `ds_api::raw` but are not the primary public API
 pub mod tool_trait;
 
-pub use agent::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult};
+pub use agent::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult, ToolInjection};
 pub use api::{ApiClient, ApiRequest};
 pub use conversation::{Conversation, LlmSummarizer, SlidingWindowSummarizer};
 pub use error::ApiError;
