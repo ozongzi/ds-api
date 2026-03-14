@@ -21,4 +21,3 @@ pub mod stream;
 
 pub use agent_core::{AgentEvent, DeepseekAgent, ToolCallChunk, ToolCallResult, ToolInjection};
 pub use stream::AgentStream;
-pub use tokio::sync::mpsc::UnboundedSender as InterruptSender;

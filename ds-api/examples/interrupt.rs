@@ -49,20 +49,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set");
 
     // Build the agent and get the sender half of the interrupt channel.
-    let (agent, tx) = DeepseekAgent::new(&token)
+    let agent = DeepseekAgent::new(&token)
         .with_streaming()
         .with_system_prompt(
             "You are a helpful assistant. \
              When the user asks you to count, use the count_to tool. \
              Always acknowledge any follow-up messages from the user.",
         )
-        .add_tool(SlowCounter)
-        .with_interrupt_channel();
+        .add_tool(SlowCounter);
 
     // Spawn a task that injects a follow-up message after a short delay.
     // This fires while the tool is still running (each step takes 200 ms,
     // the tool counts to 5 → ~1 s total; we inject at 500 ms).
-    let tx_clone = tx.clone();
+    let tx_clone = agent.interrupt_sender();
     tokio::spawn(async move {
         sleep(Duration::from_millis(500)).await;
         println!("\n[user injects] \"Actually, please also tell me the square of that number.\"\n");
@@ -88,7 +87,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             Ok(AgentEvent::ToolCall(c)) => {
-                if c.delta.is_empty() { println!("\n[calling {}]", c.name); }
+                if c.delta.is_empty() {
+                    println!("\n[calling {}]", c.name);
+                }
             }
 
             Ok(AgentEvent::ToolResult(r)) => {

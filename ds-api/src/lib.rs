@@ -88,11 +88,11 @@ impl ds_api::Tool for SlowTool {
 async fn main() {
     let token = std::env::var("DEEPSEEK_API_KEY").expect("DEEPSEEK_API_KEY must be set");
 
-    // Build the agent and obtain the sender half of the interrupt channel.
-    let (agent, tx) = DeepseekAgent::new(token)
+    let agent = DeepseekAgent::new(token)
         .with_streaming()
-        .add_tool(SlowTool)
-        .with_interrupt_channel();
+        .add_tool(SlowTool);
+
+    let tx = agent.interrupt_sender();
 
     // Inject a follow-up message from another task while tools are running.
     tokio::spawn(async move {

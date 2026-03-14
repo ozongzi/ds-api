@@ -298,31 +298,20 @@ pub(crate) async fn execute_tools(
         let mut aborted = false;
 
         if let Some(&idx) = agent.tool_index.get(&tc.function.name) {
-            // If we have an interrupt receiver, race the tool call against it.
-            if let Some(rx) = agent.interrupt_rx.as_mut() {
-                tokio::select! {
-                    res = agent.tools[idx].call(&tc.function.name, args.clone()) => {
-                        result = res;
-                    }
-                    maybe_msg = rx.recv() => {
-                        // An interrupt arrived while the tool was running.
-                        if let Some(msg) = maybe_msg {
-                            // Buffer instead of inserting immediately.
-                            buffered_interrupts.push(msg);
-                            // Drain any remaining queued interrupts into the buffer
-                            // to preserve order.
-                            while let Ok(more) = rx.try_recv() {
-                                buffered_interrupts.push(more);
-                            }
-                        }
-                        // Mark the tool as aborted and stop executing further tools.
-                        result = serde_json::json!({ "error": "aborted by interrupt" });
-                        aborted = true;
-                    }
+            tokio::select! {
+                res = agent.tools[idx].call(&tc.function.name, args.clone()) => {
+                    result = res;
                 }
-            } else {
-                // No interrupt channel — await tool normally.
-                result = agent.tools[idx].call(&tc.function.name, args.clone()).await;
+                maybe_msg = agent.interrupt_rx.recv() => {
+                    if let Some(msg) = maybe_msg {
+                        buffered_interrupts.push(msg);
+                        while let Ok(more) = agent.interrupt_rx.try_recv() {
+                            buffered_interrupts.push(more);
+                        }
+                    }
+                    result = serde_json::json!({ "error": "aborted by interrupt" });
+                    aborted = true;
+                }
             }
         } else {
             result = serde_json::json!({ "error": format!("unknown tool: {}", tc.function.name) });
@@ -349,10 +338,8 @@ pub(crate) async fn execute_tools(
 
     // Drain any user messages that arrived while tools were executing and
     // buffer them so they are appended after the tool-execution pass finishes.
-    if let Some(rx) = agent.interrupt_rx.as_mut() {
-        while let Ok(msg) = rx.try_recv() {
-            buffered_interrupts.push(msg);
-        }
+    while let Ok(msg) = agent.interrupt_rx.try_recv() {
+        buffered_interrupts.push(msg);
     }
 
     // Append buffered interrupts to the conversation history in order.
