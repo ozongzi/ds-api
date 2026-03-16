@@ -238,6 +238,27 @@ mod tests {
     }
 
     #[test]
+    fn test_add_extra_field_and_with_extra_field() {
+        let mut request = ChatCompletionRequest::default();
+        request.add_extra_field("alpha", serde_json::json!(1));
+        request.add_extra_field("beta", serde_json::json!("x"));
+        assert_eq!(
+            request.extra_body.as_ref().and_then(|m| m.get("alpha")),
+            Some(&serde_json::json!(1))
+        );
+        assert_eq!(
+            request.extra_body.as_ref().and_then(|m| m.get("beta")),
+            Some(&serde_json::json!("x"))
+        );
+
+        let chained =
+            ChatCompletionRequest::default().with_extra_field("gamma", serde_json::json!(true));
+        assert_eq!(
+            chained.extra_body.as_ref().and_then(|m| m.get("gamma")),
+            Some(&serde_json::json!(true))
+        );
+    }
+    #[test]
     fn test_extra_body_serialize_merge() {
         use crate::raw::model::Model;
         use serde_json::{Map, Value, json};

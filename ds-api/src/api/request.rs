@@ -190,3 +190,133 @@ impl ApiRequest {
         self.raw
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raw::{Function, FunctionCall, Role, ToolCall, ToolType};
+    use serde_json::json;
+
+    #[test]
+    fn builder_variants_and_message_mutation_work() {
+        let req = ApiRequest::builder()
+            .with_model("gpt-4o-mini")
+            .add_message(Message::user("u1"))
+            .add_message(Message::assistant("a1"))
+            .messages(vec![Message::system("s1")])
+            .stream(true)
+            .temperature(0.3)
+            .max_tokens(128)
+            .tool_choice_auto()
+            .text()
+            .into_raw();
+
+        assert!(matches!(req.model, crate::raw::Model::Custom(ref m) if m == "gpt-4o-mini"));
+        assert_eq!(req.messages.len(), 1);
+        assert!(matches!(req.messages[0].role, Role::System));
+        assert_eq!(req.stream, Some(true));
+        assert_eq!(req.temperature, Some(0.3));
+        assert_eq!(req.max_tokens, Some(128));
+        assert!(matches!(
+            req.tool_choice,
+            Some(crate::raw::request::tool_choice::ToolChoice::String(
+                crate::raw::request::tool_choice::ToolChoiceType::Auto
+            ))
+        ));
+        assert!(matches!(
+            req.response_format,
+            Some(ResponseFormat {
+                r#type: ResponseFormatType::Text
+            })
+        ));
+    }
+
+    #[test]
+    fn deepseek_constructors_tools_and_extra_body_work() {
+        let tool = Tool {
+            r#type: ToolType::Function,
+            function: Function {
+                name: "echo".into(),
+                description: Some("echo input".into()),
+                parameters: json!({"type":"object","properties":{}}),
+                strict: Some(true),
+            },
+        };
+
+        let req = ApiRequest::deepseek_chat(vec![Message::user("hello")])
+            .add_tool(tool.clone())
+            .add_tool(tool)
+            .json()
+            .extra_body(serde_json::Map::from_iter([(String::from("x"), json!(1))]))
+            .with_extra_field("y", json!(2))
+            .extra_field("z", json!(3))
+            .into_raw();
+
+        assert!(matches!(req.model, crate::raw::Model::DeepseekChat));
+        assert_eq!(req.tools.as_ref().map(Vec::len), Some(2));
+        assert!(matches!(
+            req.response_format,
+            Some(ResponseFormat {
+                r#type: ResponseFormatType::JsonObject
+            })
+        ));
+        assert_eq!(
+            req.extra_body.as_ref().and_then(|m| m.get("x")),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            req.extra_body.as_ref().and_then(|m| m.get("y")),
+            Some(&json!(2))
+        );
+        assert_eq!(
+            req.extra_body.as_ref().and_then(|m| m.get("z")),
+            Some(&json!(3))
+        );
+
+        let reasoner = ApiRequest::deepseek_reasoner(vec![Message::assistant("a")]).into_raw();
+        assert!(matches!(
+            reasoner.model,
+            crate::raw::Model::DeepseekReasoner
+        ));
+    }
+
+    #[test]
+    fn add_extra_field_mutates_existing_or_new_map() {
+        let mut req = ApiRequest::builder();
+        req.add_extra_field("a", json!("v1"));
+        req.add_extra_field("b", json!(false));
+        let raw = req.into_raw();
+
+        assert_eq!(
+            raw.extra_body.as_ref().and_then(|m| m.get("a")),
+            Some(&json!("v1"))
+        );
+        assert_eq!(
+            raw.extra_body.as_ref().and_then(|m| m.get("b")),
+            Some(&json!(false))
+        );
+    }
+
+    #[test]
+    fn tool_call_message_shape_serializes_in_request() {
+        let call = ToolCall {
+            id: "call_1".into(),
+            r#type: ToolType::Function,
+            function: FunctionCall {
+                name: "echo".into(),
+                arguments: r#"{"input":"hi"}"#.into(),
+            },
+        };
+
+        let mut assistant = Message::assistant("");
+        assistant.content = None;
+        assistant.tool_calls = Some(vec![call]);
+
+        let raw = ApiRequest::builder().add_message(assistant).into_raw();
+        let v = serde_json::to_value(&raw).unwrap();
+        assert_eq!(
+            v["messages"][0]["tool_calls"][0]["function"]["name"],
+            "echo"
+        );
+    }
+}
