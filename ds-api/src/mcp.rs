@@ -88,6 +88,47 @@ pub enum McpError {
 /// server via the `rmcp` client.
 ///
 /// See the [module-level documentation][self] for usage examples.
+///
+/// ## Output Length Limiting (IMPORTANT)
+///
+/// ⚠️ **By default, MCP tool outputs are LIMITED to 8,000 characters** to prevent
+/// context explosion. This is critical because even a single 2MB tool response can
+/// exceed the model's context window and crash the conversation before summarization kicks in.
+///
+/// You can customize or disable these limits:
+/// - `max_output_chars`: Limits the total character count of the JSON output string
+/// - `max_content_items`: Limits the number of content items in the output array
+///
+/// **Default limits:**
+/// - `max_output_chars`: 8,000 characters (~2,000 tokens)
+/// - `max_content_items`: 50 items
+///
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use ds_api::McpTool;
+///
+/// // Increase limit for specific tools that need more context
+/// let tool = McpTool::stdio("npx", &["-y", "@playwright/mcp"])
+///     .await?
+///     .with_max_output_chars(20000);
+///
+/// // Disable limits for tools you trust (use with caution!)
+/// let tool = McpTool::http("https://mcp.example.com/")
+///     .await?
+///     .without_output_limits();
+///
+/// // Set both limits
+/// let tool = McpTool::stdio("npx", &["mcp-server-filesystem", "/project"])
+///     .await?
+///     .with_output_limits(10000, 30);
+/// # Ok(()) }
+/// ```
+///
+/// **Recommended limits by use case:**
+/// - File system operations: 5,000 - 15,000 chars
+/// - Web search: 2,000 - 5,000 chars
+/// - Database queries: 3,000 - 8,000 chars
+/// - Code execution results: 8,000 - 20,000 chars
 #[derive(Clone)]
 pub struct McpTool {
     /// Cached tool definitions fetched from the MCP server at startup.
@@ -96,7 +137,18 @@ pub struct McpTool {
     peer: Arc<Peer<RoleClient>>,
     /// Keep the running service alive for as long as McpTool exists.
     _service: Arc<dyn std::any::Any + Send + Sync>,
+    /// Maximum character count for the JSON output string.
+    /// Default: 8,000 characters
+    max_output_chars: Option<usize>,
+    /// Maximum number of content items in the output.
+    /// Default: 50 items
+    max_content_items: Option<usize>,
 }
+
+/// Default output character limit (8000 chars ≈ 2000 tokens)
+const DEFAULT_MAX_OUTPUT_CHARS: usize = 8_000;
+/// Default maximum content items
+const DEFAULT_MAX_CONTENT_ITEMS: usize = 50;
 
 impl McpTool {
     // ── Constructors ──────────────────────────────────────────────────────────
@@ -159,11 +211,107 @@ impl McpTool {
         let peer = running.peer().clone();
         let tools = Self::fetch_tools(&peer).await?;
 
+        // Default limits are applied here to prevent context explosion
         Ok(Self {
             tools,
             peer: Arc::new(peer),
             _service: Arc::new(running),
+            max_output_chars: Some(DEFAULT_MAX_OUTPUT_CHARS),
+            max_content_items: Some(DEFAULT_MAX_CONTENT_ITEMS),
         })
+    }
+
+    // ── Configuration ─────────────────────────────────────────────────────────
+
+    /// Set the maximum character count for the JSON output string.
+    ///
+    /// When the output exceeds this limit, it will be truncated with an ellipsis.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ds_api::McpTool;
+    ///
+    /// let tool = McpTool::stdio("npx", &["-y", "@playwright/mcp"])
+    ///     .await?
+    ///     .with_max_output_chars(10000);
+    /// # Ok(()) }
+    /// ```
+    pub fn with_max_output_chars(mut self, max: usize) -> Self {
+        self.max_output_chars = Some(max);
+        self
+    }
+
+    /// Set the maximum number of content items in the output.
+    ///
+    /// When the output contains more items than this limit, only the first N items
+    /// will be returned.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ds_api::McpTool;
+    ///
+    /// let tool = McpTool::http("https://mcp.example.com/")
+    ///     .await?
+    ///     .with_max_content_items(50);
+    /// # Ok(()) }
+    /// ```
+    pub fn with_max_content_items(mut self, max: usize) -> Self {
+        self.max_content_items = Some(max);
+        self
+    }
+
+    /// Set both output limits at once.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ds_api::McpTool;
+    ///
+    /// let tool = McpTool::stdio("npx", &["-y", "@playwright/mcp"])
+    ///     .await?
+    ///     .with_output_limits(10000, 50);
+    /// # Ok(()) }
+    /// ```
+    pub fn with_output_limits(mut self, max_chars: usize, max_items: usize) -> Self {
+        self.max_output_chars = Some(max_chars);
+        self.max_content_items = Some(max_items);
+        self
+    }
+
+    /// Disable all output limits.
+    ///
+    /// ⚠️ **WARNING**: This allows MCP tools to return unlimited output, which can cause:
+    /// - Context window overflow (2MB+ responses)
+    /// - Conversation crashes before summarization
+    /// - Memory issues with large payloads
+    ///
+    /// Only use this for trusted tools where you need the full output.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ds_api::McpTool;
+    ///
+    /// let tool = McpTool::http("https://mcp-trusted.example.com/")
+    ///     .await?
+    ///     .without_output_limits();
+    /// # Ok(()) }
+    /// ```
+    pub fn without_output_limits(mut self) -> Self {
+        self.max_output_chars = None;
+        self.max_content_items = None;
+        self
+    }
+
+    /// Get the current output limits (useful for debugging).
+    pub fn output_limits(&self) -> (Option<usize>, Option<usize>) {
+        (self.max_output_chars, self.max_content_items)
     }
 
     /// Call `tools/list` (paginating automatically) and convert the MCP tool
@@ -220,17 +368,40 @@ impl Tool for McpTool {
             Ok(result) => {
                 // MCP returns a list of content items; flatten them into a
                 // single JSON value that the model can read.
-                let contents: Vec<Value> = result
+                let mut contents: Vec<Value> = result
                     .content
                     .into_iter()
                     .filter_map(|item| serde_json::to_value(item).ok())
                     .collect();
 
-                match contents.len() {
+                // Apply max_content_items limit if set
+                if let Some(max_items) = self.max_content_items {
+                    if contents.len() > max_items {
+                        contents.truncate(max_items);
+                    }
+                }
+
+                let result_value = match contents.len() {
                     0 => serde_json::json!({ "result": null }),
                     1 => contents.into_iter().next().unwrap(),
                     _ => serde_json::json!({ "content": contents }),
+                };
+
+                // Apply max_output_chars limit if set
+                if let Some(max_chars) = self.max_output_chars {
+                    let json_string = serde_json::to_string(&result_value).unwrap_or_default();
+                    if json_string.len() > max_chars {
+                        // Truncate with ellipsis indicator
+                        let truncated = format!(
+                            "{}...<truncated {} chars>",
+                            &json_string[..max_chars.saturating_sub(30)],
+                            json_string.len()
+                        );
+                        return serde_json::Value::String(truncated);
+                    }
                 }
+
+                result_value
             }
             Err(e) => {
                 error!(tool = %name, error = %e, "MCP tool call failed");
