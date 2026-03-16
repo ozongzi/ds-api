@@ -391,13 +391,16 @@ impl Tool for McpTool {
                 if let Some(max_chars) = self.max_output_chars {
                     let json_string = serde_json::to_string(&result_value).unwrap_or_default();
                     if json_string.len() > max_chars {
-                        // Truncate with ellipsis indicator
-                        let truncated = format!(
+                        let mut limit = max_chars.saturating_sub(40);
+
+                        limit = json_string.floor_char_boundary(limit);
+
+                        let truncated = &json_string[..limit];
+                        return serde_json::Value::String(format!(
                             "{}...<truncated {} chars>",
-                            &json_string[..max_chars.saturating_sub(30)],
+                            truncated,
                             json_string.len()
-                        );
-                        return serde_json::Value::String(truncated);
+                        ));
                     }
                 }
 
