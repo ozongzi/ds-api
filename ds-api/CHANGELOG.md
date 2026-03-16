@@ -1,6 +1,59 @@
-# Changelog
+## [0.10.2] - 2026-03-16
 
-All notable changes to this project will be documented in this file.
+### Bug fixes
+
+- Fix truncated tool output handling when forwarding results (fixes cases where long tool outputs were clipped unexpectedly). This release is a small patch to ensure full tool output is preserved or correctly truncated according to configured limits.
+
+---
+
+## [0.10.1] - 2026-03-16
+
+### New features
+
+- `McpTool` output length limits — added configurable output-size caps and safer truncation logic for MCP-backed tools so extremely large tool outputs no longer cause downstream problems or UI truncation surprises.
+
+### Maintenance
+
+- Bumped crate version to `0.10.1`.
+
+---
+
+## [0.10.0] - 2026-03-14
+
+### Summary
+
+Minor/feature release that improves tool handling, streaming robustness, and runtime flexibility around tools and interrupts.
+
+### New features
+
+- Runtime tool injection for agents — it's now possible to add (and in some cases configure) tools at runtime without rebuilding the agent. This enables dynamic tool wiring for long-running processes or interactive applications.
+- `ToolCallChunk` and streaming events now include an index field to make chunk ordering explicit and more robust for reconstructing streaming tool argument payloads on the client/UI side.
+
+### Behavior / robustness
+
+- Interrupt and tool channels are now "always-on" — the agent drains and accepts interrupt messages and tool events deterministically during streaming and non-streaming paths, reducing lost messages and race conditions.
+- Buffer interrupts during tool execution so injected messages arriving while a tool is running are reliably queued and applied between tool rounds.
+- Preserve all events per chunk using an internal pending-events queue to avoid losing any intermediate tool-call or reasoning events when event handling is back-pressured.
+- Tool method bodies wrapped in an explicit async closure to avoid `return` accidentally escaping outer `call` functions — improves safety of tool implementations and avoids surprising early returns.
+
+### Notes
+
+- These changes improve streaming determinism and make UIs simpler to implement (clients can rely on per-chunk indices and stable event ordering).
+
+---
+
+## [0.8.3] - 2026-03-12
+
+### New features
+
+- `ToolBundle` — a convenience grouping for registering multiple tools together with a single call. Useful for packaging related tool sets and keeping agent setup code tidy.
+
+### Maintenance / quality-of-life
+
+- Ignore common macOS artifact files (`.DS_Store`) across tooling and CI paths.
+- Insert the configured system prompt at the top of assembled requests to ensure provider-side behavior is consistent with agent-level system prompts.
+
+---
 
 ## [0.8.2] - 2026-03-12
 
@@ -117,6 +170,8 @@ Ok(AgentEvent::ToolCall(c)) => {
 }
 // in non-streaming mode, c.delta holds the complete args on the single event
 ```
+
+---
 
 ### New features
 
@@ -261,10 +316,10 @@ DEEPSEEK_API_KEY=sk-... cargo run --example interrupt
 
 ---
 
-## [0.5.2] - 2026-03-10
+## [0.5.2] - 2026-03-09
 
 ### Summary
-OpenAI-compatible provider support. No breaking changes — all existing `0.5.x` code continues to compile unchanged.
+OpenAI-compatible provider support.
 
 ### New features
 
@@ -476,9 +531,9 @@ This is a patch release that improves the token estimation heuristic, updates do
 ### Notes
 - This release contains no public API changes; it is safe for downstream users (semver patch).
 - Recommended checks before publishing:
-  - `cargo test --manifest-path ds-api/Cargo.toml`
-  - `cargo clippy -p ds-api -- -D warnings`
-  - `cargo package --manifest-path ds-api/Cargo.toml`
+  - Run `cargo test --manifest-path ds-api/Cargo.toml`
+  - Run `cargo clippy -p ds-api -- -D warnings`
+  - Run `cargo package --manifest-path ds-api/Cargo.toml`
 
 
 ## [0.3.0] - 2026-02-28
@@ -497,7 +552,7 @@ This release is a refactor-and-improve release that focuses on:
 - Examples: Added a runnable `examples/agent_demo.rs` that demonstrates registering a tool and streaming agent events.
 - Observability: Added structured tracing calls to `ApiClient` critical paths (request send, streaming, parsing).
 - Linting: Clippy issues addressed; the repository compiles cleanly under `-D warnings`.
-- Tests: All existing unit tests and doctests pass locally.
+- Tests: All existing unit tests and doctests pass locally at the time of preparing this release notes.
 
 ### Breaking changes
 This release includes intentional breaking changes from earlier 0.x versions:
@@ -555,13 +610,6 @@ cargo run --example agent_demo --manifest-path ds-api/Cargo.toml
 ```
 Ensure `DEEPSEEK_API_KEY` is set in your environment.
 
-### Packaging / publishing notes
-- Before publishing:
-  - Run `cargo test --manifest-path ds-api/Cargo.toml`.
-  - Run `cargo clippy --all-targets --all-features -- -D warnings`.
-  - Run `cargo package --manifest-path ds-api/Cargo.toml` to verify packaging.
-  - Optionally run `cargo publish --manifest-path ds-api/Cargo.toml --dry-run`.
-
 ### Internal changes / developer notes
 - `src/raw` reorganized into `request/` and `response/` submodules with doctests fixed.
 - `agent` split into `agent_core.rs` and `stream.rs` (stream state machine logic isolated).
@@ -575,14 +623,3 @@ Ensure `DEEPSEEK_API_KEY` is set in your environment.
   - conversation/summarizer unit tests,
   - basic agent flow tests.
 - All tests pass locally at the time of preparing this release notes.
-
-### Contributors
-- Core maintainer: ozongzi
-- Thanks to contributors who helped with refactor, translations, examples, and Lint fixes.
-
----
-
-If you want, I can:
-- Prepare and commit `CHANGELOG.md` (this file) and bump `version = "0.3.0"` in `ds-api/Cargo.toml`.
-- Create `v0.3.0` annotated git tag and push it.
-- Run `cargo publish --dry-run` (or a real `cargo publish`) — but that requires your confirmation and proper crates.io credentials.

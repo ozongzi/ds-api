@@ -19,7 +19,7 @@ export DEEPSEEK_API_KEY="sk-..."
 ```toml
 # Cargo.toml
 [dependencies]
-ds-api  = "0.8.0"
+ds-api  = "0.10.3"
 futures = "0.3"
 tokio   = { version = "1", features = ["full"] }
 serde   = { version = "1", features = ["derive"] }
@@ -267,10 +267,11 @@ You can send a message into a running agent loop — useful when the user types 
 The interrupt channel is attached with `.with_interrupt_channel()` and returns the agent plus a sender you can use from any task. The sender type (`InterruptSender`) is a re-export of `tokio::sync::mpsc::UnboundedSender<String>`, so it is cheap to clone and use concurrently:
 
 ```rust
-let (agent, tx) = DeepseekAgent::new(token)
+let agent = DeepseekAgent::new(token)
     .with_streaming()
     .add_tool(SlowTool)
-    .with_interrupt_channel();
+
+let tx = agent.interrupt_sender();
 ```
 
 Behavior and semantics
@@ -334,6 +335,11 @@ let agent = DeepseekAgent::custom(...)
     .add_tool(UiSpells { ... })
     .add_tool(SpawnSpell { ... });
 ```
+
+---
+
+## Familiar
+Familiar is a high-level agent built on top of ds-api. It provides opinionated defaults and a batteries-included experience for common agent patterns. Check out [familiar](https://github.com/ozongzi/familiar)
 
 ---
 
