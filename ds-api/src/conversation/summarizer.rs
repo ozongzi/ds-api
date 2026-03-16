@@ -243,7 +243,27 @@ impl Summarizer for LlmSummarizer {
 
             // ── 2. Split off the tail we want to keep verbatim ───────────────
             let retain = self.retain_last.min(history.len());
-            let split = history.len().saturating_sub(retain);
+            let mut split = history.len().saturating_sub(retain);
+
+            while split < history.len() {
+                let current_is_tool = matches!(history[split].role, Role::Tool);
+                let prev_is_call = if split > 0 {
+                    // 检查前一条是否包含 tool_calls
+                    history[split - 1]
+                        .tool_calls
+                        .as_ref()
+                        .map_or(false, |tc| !tc.is_empty())
+                } else {
+                    false
+                };
+
+                if current_is_tool || prev_is_call {
+                    split += 1;
+                } else {
+                    break;
+                }
+            }
+
             let tail: Vec<Message> = history.drain(split..).collect();
 
             // history now contains only the "old" turns (including any previous
@@ -273,8 +293,16 @@ impl Summarizer for LlmSummarizer {
                     Role::System => "System",
                     Role::Tool => "Tool",
                 };
-                if let Some(content) = &msg.content {
-                    transcript.push_str(&format!("{role_label}: {content}\n"));
+
+                let content_text = msg.content.clone().unwrap_or_else(|| {
+                    msg.tool_calls
+                        .as_ref()
+                        .map(|calls| format!("[Calls Tools: {:?}]", calls))
+                        .unwrap_or_default()
+                });
+
+                if !content_text.is_empty() {
+                    transcript.push_str(&format!("{role_label}: {content_text}\n"));
                 }
             }
 
