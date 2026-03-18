@@ -315,7 +315,108 @@ let agent = DeepseekAgent::new(token)
     .add_tool(McpTool::stdio("npx", &["-y", "@playwright/mcp"]).await?);
 ```
 
---- 
+---
+
+## Exposing tools as an MCP server
+
+The `mcp-server` feature lets you turn any `ToolBundle` into a standalone MCP server so other LLM clients (Claude Desktop, MCP Studio, etc.) can call your Rust tools.
+
+```toml
+[dependencies]
+ds-api = { version = "0.10", features = ["mcp-server"] }
+tokio  = { version = "1", features = ["full"] }
+```
+
+### Stdio mode (Claude Desktop / MCP Studio)
+
+Add this binary to your project and point Claude Desktop at it:
+
+```rust
+use ds_api::{McpServer, ToolBundle, tool};
+
+struct Calculator;
+
+#[tool]
+impl ds_api::Tool for Calculator {
+    /// Add two numbers.
+    /// a: first operand
+    /// b: second operand
+    async fn add(&self, a: f64, b: f64) -> f64 { a + b }
+
+    /// Multiply two numbers.
+    /// a: first operand
+    /// b: second operand
+    async fn multiply(&self, a: f64, b: f64) -> f64 { a * b }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    McpServer::new(ToolBundle::new().add(Calculator))
+        .with_name("my-calc-server")
+        .serve_stdio()
+        .await?;
+    Ok(())
+}
+```
+
+Register it in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-calc": {
+      "command": "/path/to/your/binary"
+    }
+  }
+}
+```
+
+### HTTP mode (Streamable HTTP transport)
+
+```rust
+use ds_api::{McpServer, ToolBundle, tool};
+
+struct Search;
+
+#[tool]
+impl ds_api::Tool for Search {
+    /// Search the web.
+    /// query: what to search for
+    async fn search(&self, query: String) -> String {
+        format!("results for: {query}")
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // MCP endpoint available at POST /mcp
+    McpServer::new(ToolBundle::new().add(Search))
+        .serve_http("0.0.0.0:3000")
+        .await?;
+    Ok(())
+}
+```
+
+### Custom routing
+
+For custom Axum routing, use `into_http_service()` to get a Tower-compatible service:
+
+```rust
+use ds_api::{McpServer, ToolBundle};
+use rmcp::transport::streamable_http_server::tower::StreamableHttpServerConfig;
+
+let service = McpServer::new(ToolBundle::new().add(MyTools))
+    .into_http_service(Default::default());
+
+let router = axum::Router::new()
+    .nest_service("/mcp", service)
+    .route("/health", axum::routing::get(|| async { "ok" }));
+
+let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+axum::serve(listener, router).await?;
+```
+
+---
 
 ## Tool Bundle
 

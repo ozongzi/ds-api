@@ -13,6 +13,16 @@ categories = ["api-bindings", "web-programming"]
 [features]
 mcp = [
     "dep:rmcp",
+    "rmcp/client",
+    "rmcp/transport-child-process",
+    "rmcp/transport-streamable-http-client-reqwest",
+]
+mcp-server = [
+    "dep:rmcp",
+    "rmcp/server",
+    "rmcp/transport-io",
+    "rmcp/transport-streamable-http-server",
+    "dep:axum",
 ]
 
 [dependencies]
@@ -29,12 +39,11 @@ thiserror = "1.0"
 # Tracing for observability and diagnostics
 tracing = "0.1"
 
-# Optional: MCP (Model Context Protocol) client support
-rmcp = { version = "1.1", optional = true, features = [
-    "client",
-    "transport-child-process",
-    "transport-streamable-http-client-reqwest",
-] }
+# Optional: MCP (Model Context Protocol) client / server support
+rmcp = { version = "1.1", optional = true }
+
+# Optional: HTTP server for mcp-server feature
+axum = { version = "0.8", optional = true, default-features = false, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 wiremock = "0.5"

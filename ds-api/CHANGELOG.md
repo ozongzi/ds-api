@@ -1,3 +1,15 @@
+## [Unreleased]
+
+### New features
+
+- `mcp-server` feature — expose any `ToolBundle` as a standards-compliant MCP server using the `rmcp` library.
+  - `McpServer::serve_stdio()` — stdio transport for Claude Desktop / MCP Studio integration.
+  - `McpServer::serve_http(addr)` — Streamable HTTP transport, mounts the MCP endpoint at `/mcp`.
+  - `McpServer::into_http_service(config)` — returns a Tower-compatible `StreamableHttpService` for embedding in an existing Axum router.
+  - Builder methods `with_name()` and `with_version()` to customise the server info advertised during the MCP handshake.
+
+---
+
 ## [0.10.2] - 2026-03-16
 
 ### Bug fixes
