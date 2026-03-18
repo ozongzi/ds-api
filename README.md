@@ -200,48 +200,12 @@ let agent = DeepseekAgent::new(token)
     .chat("Hello world");
 ```
 
-- Convenience single-field helper:
+- Single-field helper:
 
 ```rust
 let agent = DeepseekAgent::new(token)
     .extra_field("provider_option", serde_json::json!("value"));
 ```
-
-Adding a unit test (suggested)
-To verify serialization behaviour you can add a unit test that constructs a `ChatCompletionRequest` with `extra_body` and confirms the resulting top-level JSON contains the custom keys. Example test you can add to `ds-api/src/raw/request/chat_completion.rs` (or place in an integration test under `ds-api/tests/`):
-
-```rust
-#[test]
-fn test_extra_body_serialize_merge() {
-    use ds_api::raw::request::ChatCompletionRequest;
-    use ds_api::raw::model::Model;
-    use serde_json::{json, Map, Value};
-
-    // Build an extra map
-    let mut extra = Map::<String, Value>::new();
-    extra.insert("x_custom".to_string(), json!("v1"));
-    extra.insert("x_flag".to_string(), json!(true));
-
-    // Create a request with extra_body set
-    let req = ChatCompletionRequest {
-        messages: vec![],
-        model: Model::DeepseekChat,
-        extra_body: Some(extra),
-        ..Default::default()
-    };
-
-    // Serialize to a Value and assert the custom keys are present at top-level
-    let s = serde_json::to_value(&req).expect("serialize");
-    assert_eq!(s.get("x_custom").and_then(|v| v.as_str()).unwrap(), "v1");
-    assert_eq!(s.get("x_flag").and_then(|v| v.as_bool()).unwrap(), true);
-}
-```
-
-Run tests:
-- From repository root run `cargo test -p ds-api` to run the crate's tests (or `cargo test` for workspace-wide).
-
-This README section documents the intended `extra_body` usage and supplies a test template you can drop into the codebase to assert the top-level merging behaviour.
-
 
 Any OpenAI-compatible endpoint works:
 

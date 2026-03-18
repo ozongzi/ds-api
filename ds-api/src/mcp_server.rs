@@ -80,6 +80,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool as RmcpTool,
+        ToolsCapability,
     },
     service::RequestContext,
     transport::streamable_http_server::{
@@ -116,7 +117,9 @@ pub struct BundleHandler {
 
 impl ServerHandler for BundleHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::default())
+        let mut capabilities = ServerCapabilities::default();
+        capabilities.tools = Some(ToolsCapability::default());
+        ServerInfo::new(capabilities)
             .with_server_info(Implementation::new(&*self.name, &*self.version))
     }
 
