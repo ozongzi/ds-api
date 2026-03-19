@@ -202,6 +202,35 @@ impl McpTool {
         .await
     }
 
+    /// Connect to an MCP server over an arbitrary transport.
+    ///
+    /// Use this when you have a custom transport (e.g. a WebSocket tunnel)
+    /// and want to wrap it as a [`McpTool`].
+    ///
+    /// # Example
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use ds_api::McpTool;
+    /// use rmcp::transport::SinkStreamTransport;
+    /// // ... build your sink/stream from a WS connection ...
+    /// // let tool = McpTool::from_transport(SinkStreamTransport::new(sink, stream)).await?;
+    /// # Ok(()) }
+    /// ```
+    #[cfg(feature = "mcp")]
+    pub async fn from_transport<T, E, A>(transport: T) -> Result<Self, McpError>
+    where
+        T: rmcp::transport::IntoTransport<RoleClient, E, A>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        use rmcp::ServiceExt;
+        Self::from_service(
+            ().serve(transport)
+                .await
+                .map_err(|e| McpError::Init(e.to_string()))?,
+        )
+        .await
+    }
+
     // ── Internal ──────────────────────────────────────────────────────────────
 
     async fn from_service<S>(running: RunningService<RoleClient, S>) -> Result<Self, McpError>

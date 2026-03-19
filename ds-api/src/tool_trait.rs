@@ -64,6 +64,12 @@ pub struct ToolBundle {
     index: std::collections::HashMap<String, usize>,
 }
 
+impl Default for ToolBundle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolBundle {
     pub fn new() -> Self {
         Self {

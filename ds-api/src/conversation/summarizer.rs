@@ -252,7 +252,7 @@ impl Summarizer for LlmSummarizer {
                     history[split - 1]
                         .tool_calls
                         .as_ref()
-                        .map_or(false, |tc| !tc.is_empty())
+                        .is_some_and(|tc| !tc.is_empty())
                 } else {
                     false
                 };
